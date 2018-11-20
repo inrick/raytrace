@@ -95,13 +95,10 @@ ray camera_ray_at_xy(camera *c, float x, float y) {
   return (ray){.A = c->origin, .B = dir};
 }
 
-void raytrace1(void);
-void raytrace2(void);
-void raytrace3(void);
-void ppm_gradient(void);
+void raytrace(void);
 
 int main() {
-  raytrace3();
+  raytrace();
   return 0;
 }
 
@@ -114,7 +111,7 @@ v3 random_in_unit_ball() {
 }
 
 // The out parameter hit_record will be written to if function returns true
-bool hit_sphere2(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
+bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
   v3 oc = v3_sub(r->A, s->center);
   float a = v3_dot(r->B, r->B);
   float b = v3_dot(oc, r->B);
@@ -149,7 +146,7 @@ bool hit_sphere_arr(sphere s[], size_t nspheres, ray *r, float tmin, float tmax,
   bool hit_obj = false;
   float closest = tmax;
   for (size_t i = 0; i < nspheres; i++) {
-    if (hit_sphere2(&s[i], r, tmin, closest, &tmp)) {
+    if (hit_sphere(&s[i], r, tmin, closest, &tmp)) {
       hit_obj = true;
       closest = tmp.t;
       memcpy(rec, &tmp, sizeof tmp);
@@ -158,13 +155,13 @@ bool hit_sphere_arr(sphere s[], size_t nspheres, ray *r, float tmin, float tmax,
   return hit_obj;
 }
 
-v3 ray_color3(ray *r, sphere s[], size_t nspheres) {
+v3 ray_color(ray *r, sphere s[], size_t nspheres) {
   hit_record rec;
   // apparently one clips slightly above 0 to avoid "shadow acne"
   if (hit_sphere_arr(s, nspheres, r, 0.001, FLT_MAX, &rec)) {
     v3 target = v3_add(v3_add(rec.p, rec.normal), random_in_unit_ball());
     ray r2 = {.A = rec.p, .B = v3_sub(target, rec.p)};
-    return v3_kmul(0.5, ray_color3(&r2, s, nspheres));
+    return v3_kmul(0.5, ray_color(&r2, s, nspheres));
   }
   float t = 0.5*(v3_normalize(r->B).y + 1.0);
   return v3_add(
@@ -172,7 +169,7 @@ v3 ray_color3(ray *r, sphere s[], size_t nspheres) {
       v3_kmul(t, (v3){0.5, 0.7, 1.0}));
 }
 
-void raytrace3(void) {
+void raytrace(void) {
   size_t nx = 600;
   size_t ny = 300;
   size_t ns = 100;
@@ -198,114 +195,13 @@ void raytrace3(void) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color3(&r, spheres, nspheres));
+        color = v3_add(color, ray_color(&r, spheres, nspheres));
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
       int ir = (int)(255.99 * color.x);
       int ig = (int)(255.99 * color.y);
       int ib = (int)(255.99 * color.z);
-      printf("%d %d %d\n", ir, ig, ib);
-    }
-  }
-}
-
-v3 ray_color2(ray *r, sphere s[], size_t nspheres) {
-  hit_record rec;
-  if (hit_sphere_arr(s, nspheres, r, 0.0, FLT_MAX, &rec)) {
-    return v3_kmul(0.5, v3_add(rec.normal, v3_one));
-  }
-  float t = 0.5*(v3_normalize(r->B).y + 1.0);
-  return v3_add(
-      v3_kmul(1.0-t, v3_one),
-      v3_kmul(t, (v3){0.5, 0.7, 1.0}));
-}
-
-void raytrace2(void) {
-  size_t nx = 600;
-  size_t ny = 300;
-  printf("P3\n%zu %zu\n255\n", nx, ny);
-  v3 llc = (v3){-2.0, -1.0, -1.0};
-  v3 horiz = (v3){4.0, 0.0, 0.0};
-  v3 vert = (v3){0.0, 2.0, 0.0};
-  sphere s[] = {
-    (sphere){(v3){0,0,-1}, 0.5},
-    (sphere){(v3){0,-100.5,-1}, 100},
-  };
-  size_t nspheres = 2;
-  for (size_t j = ny; j > 0; j--) {
-    for (size_t i = 0; i < nx; i++) {
-      float a = (float)i / (float)nx;
-      float b = (float)(j-1) / (float)ny;
-      v3 dir = v3_add(llc, v3_add(v3_kmul(a, horiz), v3_kmul(b, vert)));
-      ray r = (ray){v3_zero, dir};
-      v3 col = ray_color2(&r, s, nspheres);
-      int ir = (int)(255.99 * col.x);
-      int ig = (int)(255.99 * col.y);
-      int ib = (int)(255.99 * col.z);
-      printf("%d %d %d\n", ir, ig, ib);
-    }
-  }
-}
-
-float hit_sphere1(v3 center, float radius, ray *r) {
-  v3 oc = v3_sub(r->A, center);
-  float a = v3_dot(r->B, r->B);
-  float b = 2.0 * v3_dot(oc, r->B);
-  float c = v3_dot(oc, oc) - radius*radius;
-  float D = b*b - 4*a*c;
-  return (D < 0) ? -1.0 : (-b - sqrt(D)) / (2.0*a);
-}
-
-v3 ray_color1(ray *r) {
-  float t = hit_sphere1((v3){0,0,-1}, -0.5, r);
-  if (t > 0.0) {
-    v3 N = v3_normalize(v3_sub(ray_eval(r, t), (v3){0,0,-1}));
-    return v3_kmul(0.5, v3_add(N, v3_one));
-  }
-  t = 0.5*(v3_normalize(r->B).y + 1.0);
-  // linear blend (1-t)*(1,1,1) + t*(0.5,0.7,1)
-  return v3_add(
-      v3_kmul(1.0 - t, v3_one),
-      v3_kmul(t, (v3){0.5, 0.7, 1.0}));
-}
-
-void raytrace1(void) {
-  size_t nx = 600;
-  size_t ny = 300;
-  printf("P3\n%zu %zu\n255\n", nx, ny);
-
-  // lower left corner and viewport dims
-  v3 llc = (v3){-2.0, -1.0, -1.0};
-  v3 horiz = (v3){4.0, 0.0, 0.0};
-  v3 vert = (v3){0.0, 2.0, 0.0};
-
-  for (size_t j = ny; j > 0; j--) {
-    for (size_t i = 0; i < nx; i++) {
-      float a = (float)i / (float)nx;
-      float b = (float)(j-1) / (float)ny;
-      // dir = llc + a*horiz + b*vert
-      v3 dir = v3_add(llc, v3_add(v3_kmul(a, horiz), v3_kmul(b, vert)));
-      ray r = (ray){v3_zero, dir};
-      v3 col = ray_color1(&r);
-      int ir = (int)(255.99 * col.x);
-      int ig = (int)(255.99 * col.y);
-      int ib = (int)(255.99 * col.z);
-      printf("%d %d %d\n", ir, ig, ib);
-    }
-  }
-}
-
-void ppm_gradient(void) {
-  size_t nx = 400;
-  size_t ny = 200;
-  printf("P3\n%zu %zu\n255\n", nx, ny);
-  for (size_t j = ny; j > 0; j--) {
-    for (size_t i = 0; i < nx; i++) {
-      v3 rgb = (v3){(float)i / (float)nx, (float)(j-1) / (float)ny, 0.5};
-      int ir = (int)(255.99 * rgb.x);
-      int ig = (int)(255.99 * rgb.y);
-      int ib = (int)(255.99 * rgb.z);
       printf("%d %d %d\n", ir, ig, ib);
     }
   }
