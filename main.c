@@ -14,6 +14,10 @@ typedef struct {
 const v3 v3_zero = (v3){0, 0, 0};
 const v3 v3_one = (v3){1, 1, 1};
 
+v3 v3_neg(v3 u) {
+  return (v3){-u.x, -u.y, -u.z};
+}
+
 v3 v3_add(v3 u, v3 v) {
   return (v3){u.x+v.x, u.y+v.y, u.z+v.z};
 }
@@ -56,6 +60,10 @@ v3 v3_normalize(v3 u) {
 float v3_dot(v3 u, v3 v) {
   return u.x*v.x + u.y*v.y + u.z*v.z;
 }
+
+v3 v3_reflect(v3 u, v3 n) {
+  return v3_sub(u, v3_kmul(2*v3_dot(u,n), n));
+}
 // vector end
 
 // ray begin
@@ -69,15 +77,39 @@ v3 ray_eval(ray *r, float t) {
 }
 // ray end
 
+typedef enum {
+  MATTE,
+  METAL,
+  DIELECTRIC,
+} material_t;
+
+typedef struct {
+  material_t type;
+  union {
+    struct {
+      v3 albedo;
+    } matte;
+    struct {
+      v3 albedo;
+      float fuzz;
+    } metal;
+    struct {
+      float ref_idx;
+    } dielectric;
+  };
+} material;
+
 typedef struct {
   float t;
   v3 p;
   v3 normal;
+  material *mat;
 } hit_record;
 
 typedef struct {
   v3 center;
   float radius;
+  material mat;
 } sphere;
 
 typedef struct {
@@ -104,10 +136,86 @@ int main() {
 
 v3 random_in_unit_ball() {
   v3 u;
-  do {
+  float norm = 0;
+  while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
     u = v3_sub(v3_kmul(2, (v3){drand48(), drand48(), drand48()}), v3_one);
-  } while (v3_norm(u) >= 1.0);
+    norm = v3_norm(u);
+  }
   return u;
+}
+
+float schlick(float cosine, float ref_idx) {
+  float r0 = (1-ref_idx)/(1+ref_idx);
+  r0 = r0*r0;
+  return r0 + (1-r0)*pow(1-cosine, 5);
+}
+
+bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
+  v3 unormed = v3_normalize(u);
+  float dt = v3_dot(unormed, n);
+  float D = 1.0 - ni_over_nt*ni_over_nt*(1 - dt*dt);
+  if (D > 0) {
+    v3 ref = v3_sub(v3_kmul(ni_over_nt, v3_sub(unormed, v3_kmul(dt, n))), v3_kmul(sqrt(D), n));
+    memcpy(refracted, &ref, sizeof(*refracted));
+    return true;
+  }
+  return false;
+}
+
+// in: mat, r_in, rec
+// out: attenuation, scattered
+// out parameters are written if scatter returns true
+bool scatter(material *mat, ray *r_in, hit_record *rec, v3 *attenuation, ray *scattered) {
+  switch (mat->type) {
+  case MATTE: {
+    v3 target = v3_add(v3_add(rec->p, rec->normal), random_in_unit_ball());
+    ray r = {.A = rec->p, .B = v3_sub(target, rec->p)};
+    memcpy(attenuation, &mat->matte.albedo, sizeof(*attenuation));
+    memcpy(scattered, &r, sizeof(*scattered));
+    return true;
+  }
+  case METAL: {
+    v3 reflected = v3_reflect(v3_normalize(r_in->B), rec->normal);
+    ray r = {.A = rec->p, .B = v3_add(reflected, v3_kmul(mat->metal.fuzz, random_in_unit_ball()))};
+    memcpy(attenuation, &mat->metal.albedo, sizeof(*attenuation));
+    memcpy(scattered, &r, sizeof(*scattered));
+    return v3_dot(scattered->B, rec->normal) > 0;
+  }
+  case DIELECTRIC: {
+    v3 outward_normal;
+    float ni_over_nt;
+    float cosine;
+    float ref_idx = mat->dielectric.ref_idx;
+    if (v3_dot(r_in->B, rec->normal) > 0) {
+      outward_normal = v3_neg(rec->normal);
+      ni_over_nt = ref_idx;
+      cosine = ref_idx * v3_dot(r_in->B, rec->normal) / v3_norm(r_in->B);
+    } else {
+      outward_normal = rec->normal;
+      ni_over_nt = 1.0 / ref_idx;
+      cosine = -v3_dot(r_in->B, rec->normal) / v3_norm(r_in->B);
+    }
+    v3 refracted;
+    float reflect_prob;
+    if (refract(r_in->B, outward_normal, ni_over_nt, &refracted)) {
+      reflect_prob = schlick(cosine, ref_idx);
+    } else {
+      reflect_prob = 1.0;
+    }
+    ray r;
+    if (drand48() < reflect_prob) {
+      r = (ray){.A = rec->p, .B = v3_reflect(r_in->B, rec->normal)};
+    } else {
+      r = (ray){.A = rec->p, .B = refracted};
+    }
+    memcpy(attenuation, &v3_one, sizeof(*attenuation));
+    memcpy(scattered, &r, sizeof(*scattered));
+    return true;
+  }
+  default:
+    assert(0);
+  }
+  return false;
 }
 
 // The out parameter hit_record will be written to if function returns true
@@ -125,6 +233,7 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
       rec->p = ray_eval(r, t);
       // (p-c)/r
       rec->normal = v3_kdiv(v3_sub(rec->p, s->center), s->radius);
+      rec->mat = &s->mat;
       return true;
     }
     // try second root
@@ -134,6 +243,7 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
       rec->p = ray_eval(r, t);
       // (p-c)/r
       rec->normal = v3_kdiv(v3_sub(rec->p, s->center), s->radius);
+      rec->mat = &s->mat;
       return true;
     }
   }
@@ -141,12 +251,12 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
 }
 
 // The out parameter hit_record will be written to if function returns true
-bool hit_sphere_arr(sphere s[], size_t nspheres, ray *r, float tmin, float tmax, hit_record *rec) {
+bool hit_sphere_arr(sphere spheres[], size_t nspheres, ray *r, float tmin, float tmax, hit_record *rec) {
   hit_record tmp;
   bool hit_obj = false;
   float closest = tmax;
   for (size_t i = 0; i < nspheres; i++) {
-    if (hit_sphere(&s[i], r, tmin, closest, &tmp)) {
+    if (hit_sphere(&spheres[i], r, tmin, closest, &tmp)) {
       hit_obj = true;
       closest = tmp.t;
       memcpy(rec, &tmp, sizeof tmp);
@@ -155,13 +265,16 @@ bool hit_sphere_arr(sphere s[], size_t nspheres, ray *r, float tmin, float tmax,
   return hit_obj;
 }
 
-v3 ray_color(ray *r, sphere s[], size_t nspheres) {
+v3 ray_color(ray *r, sphere spheres[], size_t nspheres, size_t depth) {
   hit_record rec;
   // apparently one clips slightly above 0 to avoid "shadow acne"
-  if (hit_sphere_arr(s, nspheres, r, 0.001, FLT_MAX, &rec)) {
-    v3 target = v3_add(v3_add(rec.p, rec.normal), random_in_unit_ball());
-    ray r2 = {.A = rec.p, .B = v3_sub(target, rec.p)};
-    return v3_kmul(0.5, ray_color(&r2, s, nspheres));
+  if (hit_sphere_arr(spheres, nspheres, r, 0.001, FLT_MAX, &rec)) {
+    ray scattered;
+    v3 attenuation;
+    if (depth < 50 && scatter(rec.mat, r, &rec, &attenuation, &scattered)) {
+      return v3_mul(attenuation, ray_color(&scattered, spheres, nspheres, depth+1));
+    }
+    return v3_zero;
   }
   float t = 0.5*(v3_normalize(r->B).y + 1.0);
   return v3_add(
@@ -181,10 +294,13 @@ void raytrace(void) {
     .origin = v3_zero,
   };
   sphere spheres[] = {
-    {.center = {0,0,-1},      .radius = 0.5},
-    {.center = {0,-100.5,-1}, .radius = 100},
+    {.center = {0,0,-1},      .radius = 0.5,   .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
+    {.center = {0,-100.5,-1}, .radius = 100,   .mat = {.type = MATTE, .matte.albedo = (v3){0.8,0.8,0.0}}},
+    {.center = {1,0,-1},      .radius = 0.5,   .mat = {.type = METAL, .metal = {.albedo = (v3){0.6,0.6,0.2}, .fuzz = 0.2}}},
+    {.center = {-1,0,-1},     .radius = 0.5,   .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
+    {.center = {-1,0,-1},     .radius = -0.45, .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
   };
-  size_t nspheres = 2;
+  size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
 
   printf("P3\n%zu %zu\n255\n", nx, ny);
   for (size_t j = ny; j > 0; j--) {
@@ -195,7 +311,7 @@ void raytrace(void) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color(&r, spheres, nspheres));
+        color = v3_add(color, ray_color(&r, spheres, nspheres, 0));
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
