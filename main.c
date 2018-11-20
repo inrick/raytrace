@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdlib.h> // drand48 seems to require gnu extension
+#include <unistd.h>
 
 // vector begin
 typedef struct {
@@ -302,7 +304,10 @@ void raytrace(void) {
   };
   size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
 
-  printf("P3\n%zu %zu\n255\n", nx, ny);
+  uint8_t buf[nx*ny*3];
+  size_t bi = 0;
+  printf("P6\n%zu %zu 255\n", nx, ny);
+  fflush(stdout);
   for (size_t j = ny; j > 0; j--) {
     for (size_t i = 0; i < nx; i++) {
       v3 color = v3_zero;
@@ -315,10 +320,11 @@ void raytrace(void) {
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
-      int ir = (int)(255.99 * color.x);
-      int ig = (int)(255.99 * color.y);
-      int ib = (int)(255.99 * color.z);
-      printf("%d %d %d\n", ir, ig, ib);
+      buf[bi+0] = (255.99 * color.x);
+      buf[bi+1] = (255.99 * color.y);
+      buf[bi+2] = (255.99 * color.z);
+      bi += 3;
     }
   }
+  write(STDOUT_FILENO, buf, sizeof buf);
 }
