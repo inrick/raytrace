@@ -47,6 +47,7 @@ v3 v3_div(v3 u, v3 v) {
 v3 v3_kdiv(v3 u, float k) {
   return (v3){u.x/k, u.y/k, u.z/k};
 }
+
 // L2 norm
 float v3_norm(v3 u) {
   return sqrt(u.x*u.x + u.y*u.y + u.z*u.z);
@@ -73,6 +74,16 @@ v3 v3_cross(v3 u, v3 v) {
 
 v3 v3_reflect(v3 u, v3 n) {
   return v3_sub(u, v3_kmul(2*v3_dot(u,n), n));
+}
+
+v3 random_in_unit_ball() {
+  v3 u;
+  float norm = 0;
+  while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
+    u = v3_sub(v3_kmul(2, (v3){drand48(), drand48(), drand48()}), v3_one);
+    norm = v3_norm(u);
+  }
+  return u;
 }
 // vector end
 
@@ -124,32 +135,48 @@ typedef struct {
 
 typedef struct {
   v3 llc; // lower left corner
-  v3 horiz;
-  v3 vert;
-  v3 origin;
+  v3 horiz, vert, origin, u, v, w;
+  float lrad; // lens radius
 } camera;
 
-camera camera_new(v3 lookfrom, v3 lookat, v3 vup, float vfov, float aspect) {
+camera camera_new(
+    v3 lookfrom, v3 lookat, v3 vup, float vfov,
+    float aspect, float aperture, float focus_dist
+) {
   float theta = vfov*M_PI/180;
   float half_height = tan(theta/2);
   float half_width = aspect * half_height;
   v3 w = v3_normalize(v3_sub(lookfrom, lookat));
   v3 u = v3_normalize(v3_cross(vup, w));
   v3 v = v3_cross(w, u);
+  v3 llc = v3_sub(
+      v3_sub(
+          v3_sub(
+              lookfrom,
+              v3_kmul(half_width*focus_dist, u)),
+          v3_kmul(half_height*focus_dist, v)),
+      v3_kmul(focus_dist, w));
   return (camera){
-    .llc    = v3_sub(v3_sub(v3_sub(lookfrom, v3_kmul(half_width, u)), v3_kmul(half_height, v)), w),
-    .horiz  = v3_kmul(2*half_width, u),
-    .vert   = v3_kmul(2*half_height, v),
+    .llc    = llc,
+    .horiz  = v3_kmul(2*half_width*focus_dist, u),
+    .vert   = v3_kmul(2*half_height*focus_dist, v),
     .origin = lookfrom,
+    .u      = u,
+    .v      = v,
+    .w      = w,
+    .lrad   = aperture/2,
   };
 }
 
 ray camera_ray_at_xy(camera *c, float x, float y) {
-  // llc + x*horiz + y*vert - origin
+  v3 rd = v3_kmul(c->lrad, random_in_unit_ball());
+  v3 offset = v3_add(v3_kmul(rd.x, c->u), v3_kmul(rd.y, c->v));
   v3 dir = v3_sub(
-      v3_add(c->llc, v3_add(v3_kmul(x, c->horiz), v3_kmul(y, c->vert))),
-      c->origin);
-  return (ray){.A = c->origin, .B = dir};
+      v3_sub(
+          v3_add(c->llc, v3_add(v3_kmul(x, c->horiz), v3_kmul(y, c->vert))),
+          c->origin),
+      offset);
+  return (ray){.A = v3_add(c->origin, offset), .B = dir};
 }
 
 void raytrace(void);
@@ -157,16 +184,6 @@ void raytrace(void);
 int main() {
   raytrace();
   return 0;
-}
-
-v3 random_in_unit_ball() {
-  v3 u;
-  float norm = 0;
-  while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
-    u = v3_sub(v3_kmul(2, (v3){drand48(), drand48(), drand48()}), v3_one);
-    norm = v3_norm(u);
-  }
-  return u;
 }
 
 float schlick(float cosine, float ref_idx) {
@@ -312,8 +329,14 @@ void raytrace(void) {
   size_t ny = 300;
   size_t ns = 100;
 
+  v3 lookfrom = (v3){-3.0,0.7,3};
+  v3 lookat = (v3){0,0,-1};
+  //v3 lookfrom = (v3){3,3,2};
+  //v3 lookat = (v3){0,0,-1};
+  float dist_to_focus = v3_norm(v3_sub(lookfrom, lookat));
+  float aperture = 1.0;
   camera cam = camera_new(
-    (v3){-2.0,0.7,1.6}, (v3){0,0,-1}, (v3){0,1,0}, 30, (float)nx / (float)ny
+    lookfrom, lookat, (v3){0,1,0}, 20, (float)nx / (float)ny, aperture, dist_to_focus
   );
   sphere spheres[] = {
     {.center = {0,0,-1},      .radius =  0.5,  .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
