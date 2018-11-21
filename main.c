@@ -394,6 +394,12 @@ scene *random_scene() {
   return sc;
 }
 
+void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
+  printf("P6\n%zu %zu 255\n", x, y);
+  fflush(stdout);
+  write(STDOUT_FILENO, buf, size);
+}
+
 void raytrace(void) {
   size_t nx = 600;
   size_t ny = 300;
@@ -419,8 +425,6 @@ void raytrace(void) {
 
   uint8_t buf[nx*ny*3];
   size_t bi = 0;
-  printf("P6\n%zu %zu 255\n", nx, ny);
-  fflush(stdout);
   for (size_t j = ny; j > 0; j--) {
     for (size_t i = 0; i < nx; i++) {
       v3 color = v3_zero;
@@ -439,5 +443,5 @@ void raytrace(void) {
       bi += 3;
     }
   }
-  write(STDOUT_FILENO, buf, sizeof buf);
+  ppm_write_stdout(buf, sizeof buf, nx, ny);
 }
