@@ -63,6 +63,14 @@ float v3_dot(v3 u, v3 v) {
   return u.x*v.x + u.y*v.y + u.z*v.z;
 }
 
+v3 v3_cross(v3 u, v3 v) {
+  return (v3){
+    .x = u.y*v.z - u.z*v.y,
+    .y = u.z*v.x - u.x*v.z,
+    .z = u.x*v.y - u.y*v.x,
+  };
+}
+
 v3 v3_reflect(v3 u, v3 n) {
   return v3_sub(u, v3_kmul(2*v3_dot(u,n), n));
 }
@@ -120,6 +128,21 @@ typedef struct {
   v3 vert;
   v3 origin;
 } camera;
+
+camera camera_new(v3 lookfrom, v3 lookat, v3 vup, float vfov, float aspect) {
+  float theta = vfov*M_PI/180;
+  float half_height = tan(theta/2);
+  float half_width = aspect * half_height;
+  v3 w = v3_normalize(v3_sub(lookfrom, lookat));
+  v3 u = v3_normalize(v3_cross(vup, w));
+  v3 v = v3_cross(w, u);
+  return (camera){
+    .llc    = v3_sub(v3_sub(v3_sub(lookfrom, v3_kmul(half_width, u)), v3_kmul(half_height, v)), w),
+    .horiz  = v3_kmul(2*half_width, u),
+    .vert   = v3_kmul(2*half_height, v),
+    .origin = lookfrom,
+  };
+}
 
 ray camera_ray_at_xy(camera *c, float x, float y) {
   // llc + x*horiz + y*vert - origin
@@ -289,17 +312,14 @@ void raytrace(void) {
   size_t ny = 300;
   size_t ns = 100;
 
-  camera cam = {
-    .llc    = {-2.0, -1.0, -1.0},
-    .horiz  = {4.0, 0.0, 0.0},
-    .vert   = {0.0, 2.0, 0.0},
-    .origin = v3_zero,
-  };
+  camera cam = camera_new(
+    (v3){-2.0,0.7,1.6}, (v3){0,0,-1}, (v3){0,1,0}, 30, (float)nx / (float)ny
+  );
   sphere spheres[] = {
-    {.center = {0,0,-1},      .radius = 0.5,   .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
-    {.center = {0,-100.5,-1}, .radius = 100,   .mat = {.type = MATTE, .matte.albedo = (v3){0.8,0.8,0.0}}},
-    {.center = {1,0,-1},      .radius = 0.5,   .mat = {.type = METAL, .metal = {.albedo = (v3){0.6,0.6,0.2}, .fuzz = 0.2}}},
-    {.center = {-1,0,-1},     .radius = 0.5,   .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
+    {.center = {0,0,-1},      .radius =  0.5,  .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
+    {.center = {0,-100.5,-1}, .radius =  100,  .mat = {.type = MATTE, .matte.albedo = (v3){0.8,0.8,0.0}}},
+    {.center = {1,0,-1},      .radius =  0.5,  .mat = {.type = METAL, .metal = {.albedo = (v3){0.6,0.6,0.2}, .fuzz = 0.2}}},
+    {.center = {-1,0,-1},     .radius =  0.5,  .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
     {.center = {-1,0,-1},     .radius = -0.45, .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
   };
   size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
