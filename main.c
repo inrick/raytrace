@@ -134,6 +134,11 @@ typedef struct {
 } sphere;
 
 typedef struct {
+  size_t nspheres;
+  sphere *spheres;
+} scene;
+
+typedef struct {
   v3 llc; // lower left corner
   v3 horiz, vert, origin, u, v, w;
   float lrad; // lens radius
@@ -293,10 +298,12 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
 }
 
 // The out parameter hit_record will be written to if function returns true
-bool hit_sphere_arr(sphere spheres[], size_t nspheres, ray *r, float tmin, float tmax, hit_record *rec) {
+bool hit_scene(scene *sc, ray *r, float tmin, float tmax, hit_record *rec) {
   hit_record tmp;
   bool hit_obj = false;
   float closest = tmax;
+  size_t nspheres = sc->nspheres;
+  sphere *spheres = sc->spheres;
   for (size_t i = 0; i < nspheres; i++) {
     if (hit_sphere(&spheres[i], r, tmin, closest, &tmp)) {
       hit_obj = true;
@@ -307,14 +314,14 @@ bool hit_sphere_arr(sphere spheres[], size_t nspheres, ray *r, float tmin, float
   return hit_obj;
 }
 
-v3 ray_color(ray *r, sphere spheres[], size_t nspheres, size_t depth) {
+v3 ray_color(ray *r, scene *sc, size_t depth) {
   hit_record rec;
   // apparently one clips slightly above 0 to avoid "shadow acne"
-  if (hit_sphere_arr(spheres, nspheres, r, 0.001, FLT_MAX, &rec)) {
+  if (hit_scene(sc, r, 0.001, FLT_MAX, &rec)) {
     ray scattered;
     v3 attenuation;
     if (depth < 50 && scatter(rec.mat, r, &rec, &attenuation, &scattered)) {
-      return v3_mul(attenuation, ray_color(&scattered, spheres, nspheres, depth+1));
+      return v3_mul(attenuation, ray_color(&scattered, sc, depth+1));
     }
     return v3_zero;
   }
@@ -324,21 +331,82 @@ v3 ray_color(ray *r, sphere spheres[], size_t nspheres, size_t depth) {
       v3_kmul(t, (v3){0.5, 0.7, 1.0}));
 }
 
+scene *random_scene() {
+  size_t nspheres = 500;
+  sphere *spheres = calloc(nspheres, sizeof(*spheres));
+  spheres[0] = (sphere){
+    .center = {0,-1000,0},
+    .radius = 1000,
+    .mat = {.type = MATTE, .matte.albedo = (v3){0.7,0.7,0.7}},
+  };
+  size_t i = 1;
+  for (int a = -11; a < 11; a++) {
+    for (int b = -11; b < 11; b++) {
+      float choose_mat = drand48();
+      v3 center = (v3){a+0.9*drand48(), 0.2, b+0.9*drand48()};
+      if (choose_mat < 0.8) { // matte
+        spheres[i++] = (sphere){
+          .center = center,
+          .radius = 0.2,
+          .mat = {.type = MATTE, .matte.albedo = {
+            drand48()*drand48(), drand48()*drand48(), drand48()*drand48()
+          }},
+        };
+      } else if (choose_mat < 0.95) { // metal
+        spheres[i++] = (sphere){
+          .center = center,
+          .radius = 0.2,
+          .mat = {.type = METAL, .metal = {
+            .albedo = {
+              0.5*(1+drand48()), 0.5*(1+drand48()), 0.5*(1+drand48())
+            },
+            .fuzz = 0.5*drand48(),
+          }},
+        };
+      } else { // dielectric
+        spheres[i++] = (sphere){
+          .center = center,
+          .radius = 0.2,
+          .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5},
+        };
+      }
+    }
+  }
+  spheres[i++] = (sphere){
+    .center = {0,1,0},
+    .radius = 1,
+    .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5},
+  };
+  spheres[i++] = (sphere){
+    .center = {-4,1,0},
+    .radius = 1,
+    .mat = {.type = MATTE, .matte.albedo = {0.2,0.4,0.7}},
+  };
+  spheres[i++] = (sphere){
+    .center = {4,1,0},
+    .radius = 1,
+    .mat = {.type = METAL, .metal = {.albedo = {0.6, 0.6, 0.5}, .fuzz = 0}},
+  };
+  scene *sc = malloc(sizeof(*sc));
+  assert(sc);
+  sc->nspheres = i;
+  sc->spheres = spheres;
+  return sc;
+}
+
 void raytrace(void) {
   size_t nx = 600;
   size_t ny = 300;
   size_t ns = 100;
 
-  v3 lookfrom = (v3){-3.0,0.7,3};
-  v3 lookat = (v3){0,0,-1};
-  //v3 lookfrom = (v3){3,3,2};
-  //v3 lookat = (v3){0,0,-1};
+  v3 lookfrom = {11,1.8,5};
+  v3 lookat = {0,0,-1};
   float dist_to_focus = v3_norm(v3_sub(lookfrom, lookat));
-  float aperture = 1.0;
+  float aperture = 0.05;
   camera cam = camera_new(
     lookfrom, lookat, (v3){0,1,0}, 20, (float)nx / (float)ny, aperture, dist_to_focus
   );
-  sphere spheres[] = {
+  /*sphere spheres[] = {
     {.center = {0,0,-1},      .radius =  0.5,  .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
     {.center = {0,-100.5,-1}, .radius =  100,  .mat = {.type = MATTE, .matte.albedo = (v3){0.8,0.8,0.0}}},
     {.center = {1,0,-1},      .radius =  0.5,  .mat = {.type = METAL, .metal = {.albedo = (v3){0.6,0.6,0.2}, .fuzz = 0.2}}},
@@ -346,6 +414,8 @@ void raytrace(void) {
     {.center = {-1,0,-1},     .radius = -0.45, .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
   };
   size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
+  scene sc = (scene){nspheres, spheres};*/
+  scene *sc = random_scene();
 
   uint8_t buf[nx*ny*3];
   size_t bi = 0;
@@ -359,7 +429,7 @@ void raytrace(void) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color(&r, spheres, nspheres, 0));
+        color = v3_add(color, ray_color(&r, sc, 0));
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
