@@ -194,7 +194,9 @@ static bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
   float dt = v3_dot(unormed, n);
   float D = 1.0 - ni_over_nt*ni_over_nt*(1 - dt*dt);
   if (D > 0) {
-    v3 ref = v3_sub(v3_kmul(ni_over_nt, v3_sub(unormed, v3_kmul(dt, n))), v3_kmul(sqrt(D), n));
+    v3 ref = v3_sub(
+        v3_kmul(ni_over_nt, v3_sub(unormed, v3_kmul(dt, n))),
+        v3_kmul(sqrt(D), n));
     memcpy(refracted, &ref, sizeof(*refracted));
     return true;
   }
@@ -217,7 +219,8 @@ static bool scatter(
   }
   case METAL: {
     v3 reflected = v3_reflect(v3_normalize(r_in->B), rec->normal);
-    ray r = {.A = rec->p, .B = v3_add(reflected, v3_kmul(mat->metal.fuzz, random_in_unit_ball()))};
+    v3 dir = v3_add(reflected, v3_kmul(mat->metal.fuzz, random_in_unit_ball()));
+    ray r = {.A = rec->p, .B = dir};
     memcpy(attenuation, &mat->metal.albedo, sizeof(*attenuation));
     memcpy(scattered, &r, sizeof(*scattered));
     return v3_dot(scattered->B, rec->normal) > 0;
@@ -237,17 +240,12 @@ static bool scatter(
       cosine = -v3_dot(r_in->B, rec->normal) / v3_norm(r_in->B);
     }
     v3 refracted;
-    float reflect_prob;
-    if (refract(r_in->B, outward_normal, ni_over_nt, &refracted)) {
-      reflect_prob = schlick(cosine, ref_idx);
-    } else {
-      reflect_prob = 1.0;
-    }
     ray r;
-    if (drand48() < reflect_prob) {
-      r = (ray){.A = rec->p, .B = v3_reflect(r_in->B, rec->normal)};
-    } else {
+    if (refract(r_in->B, outward_normal, ni_over_nt, &refracted)
+        && drand48() >= schlick(cosine, ref_idx)) {
       r = (ray){.A = rec->p, .B = refracted};
+    } else {
+      r = (ray){.A = rec->p, .B = v3_reflect(r_in->B, rec->normal)};
     }
     memcpy(attenuation, &v3_one, sizeof(*attenuation));
     memcpy(scattered, &r, sizeof(*scattered));
@@ -329,7 +327,7 @@ static v3 ray_color(ray *r, scene *sc, size_t depth) {
 }
 
 static scene random_scene() {
-  size_t nspheres = 500;
+  size_t nspheres = 500; // some extra room, should calculate this properly
   sphere *spheres = calloc(nspheres, sizeof(*spheres));
   spheres[0] = (sphere){
     .center = {0,-1000,0},
@@ -384,11 +382,7 @@ static scene random_scene() {
     .radius = 1,
     .mat = {.type = METAL, .metal = {.albedo = {0.6, 0.6, 0.5}, .fuzz = 0}},
   };
-  scene *sc = malloc(sizeof(*sc));
-  assert(sc);
-  sc->nspheres = i;
-  sc->spheres = spheres;
-  return sc;
+  return (scene){.nspheres = i, .spheres = spheres};
 }
 
 static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
@@ -407,7 +401,8 @@ static void raytrace(void) {
   float dist_to_focus = v3_norm(v3_sub(lookfrom, lookat));
   float aperture = 0.05;
   camera cam = camera_new(
-    lookfrom, lookat, (v3){0,1,0}, 20, (float)nx / (float)ny, aperture, dist_to_focus
+    lookfrom, lookat, (v3){0,1,0}, 20,
+    (float)nx / (float)ny, aperture, dist_to_focus
   );
   /*sphere spheres[] = {
     {.center = {0,0,-1},      .radius =  0.5,  .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
@@ -418,7 +413,9 @@ static void raytrace(void) {
   };
   size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
   scene sc = (scene){nspheres, spheres};*/
-  scene *sc = random_scene();
+
+  // leak memory in scene since program quits anyway
+  scene sc = random_scene();
 
   uint8_t buf[nx*ny*3];
   size_t bi = 0;
@@ -430,7 +427,7 @@ static void raytrace(void) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color(&r, sc, 0));
+        color = v3_add(color, ray_color(&r, &sc, 0));
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
