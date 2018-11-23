@@ -328,6 +328,8 @@ static v3 ray_color(ray *r0, scene *sc) {
       if (scatter(rec.mat, &r, &rec, &attenuation, &scattered)) {
         r = scattered;
         color = v3_mul(attenuation, color);
+      } else {
+        color = v3_zero;
       }
     } else {
       float t = 0.5*(v3_normalize(r.B).y + 1.0);
@@ -400,6 +402,25 @@ static scene random_scene() {
     .mat = {.type = METAL, .metal = {.albedo = {0.6, 0.6, 0.5}, .fuzz = 0}},
   };
   return (scene){.nspheres = i, .spheres = spheres};
+}
+*/
+
+/*
+static scene trivial_scene() {
+  size_t nspheres = 2;
+  sphere *spheres = calloc(nspheres, sizeof(*spheres));
+  assert(spheres);
+  spheres[0] = (sphere){
+    .center = {0,-1000,0},
+    .radius = 1000,
+    .mat = {.type = MATTE, .matte.albedo = (v3){0.88,0.96,0.7}},
+  };
+  spheres[1] = (sphere){
+    .center = {0,1,0},
+    .radius = 1,
+    .mat = {.type = METAL, .metal = {.albedo = {0.8,0.9,0.8}, .fuzz = 0.4}},
+  };
+  return (scene){.nspheres = nspheres, .spheres = spheres};
 }
 */
 
