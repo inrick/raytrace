@@ -309,21 +309,29 @@ static bool hit_scene(
   return hit_obj;
 }
 
-static v3 ray_color(ray *r, scene *sc, size_t depth) {
+static v3 ray_color(ray *r0, scene *sc) {
   hit_record rec;
-  // apparently one clips slightly above 0 to avoid "shadow acne"
-  if (hit_scene(sc, r, 0.001, FLT_MAX, &rec)) {
-    ray scattered;
-    v3 attenuation;
-    if (depth < 50 && scatter(rec.mat, r, &rec, &attenuation, &scattered)) {
-      return v3_mul(attenuation, ray_color(&scattered, sc, depth+1));
+  v3 color = v3_one;
+  ray r = *r0;
+  for (size_t depth = 0; depth < 50; depth++) {
+    // apparently one clips slightly above 0 to avoid "shadow acne"
+    if (hit_scene(sc, &r, 0.001, FLT_MAX, &rec)) {
+      ray scattered;
+      v3 attenuation;
+      if (scatter(rec.mat, &r, &rec, &attenuation, &scattered)) {
+        r = scattered;
+        color = v3_mul(attenuation, color);
+      }
+    } else {
+      float t = 0.5*(v3_normalize(r.B).y + 1.0);
+      color = v3_mul(
+          color, v3_add(
+              v3_kmul(1.0-t, v3_one),
+              v3_kmul(t, (v3){0.5, 0.7, 1.0})));
+      break;
     }
-    return v3_zero;
   }
-  float t = 0.5*(v3_normalize(r->B).y + 1.0);
-  return v3_add(
-      v3_kmul(1.0-t, v3_one),
-      v3_kmul(t, (v3){0.5, 0.7, 1.0}));
+  return color;
 }
 
 static scene random_scene() {
@@ -427,7 +435,7 @@ static void raytrace(void) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color(&r, &sc, 0));
+        color = v3_add(color, ray_color(&r, &sc));
       }
       color = v3_kdiv(color, (float)ns);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
