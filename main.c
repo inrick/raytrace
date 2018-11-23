@@ -210,12 +210,13 @@ static bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
   return false;
 }
 
-// in: mat, r_in, rec
+// in: r_in, rec
 // out: attenuation, scattered
 // out parameters are written if scatter returns true
 static bool scatter(
-  material *mat, ray *r_in, hit_record *rec, v3 *attenuation, ray *scattered
+  ray *r_in, hit_record *rec, v3 *attenuation, ray *scattered
 ) {
+  material *mat = rec->mat;
   switch (mat->type) {
   case MATTE: {
     v3 target = v3_add(v3_add(rec->p, rec->normal), random_in_unit_ball());
@@ -325,7 +326,7 @@ static v3 ray_color(ray *r0, scene *sc) {
     if (hit_scene(sc, &r, 0.001, FLT_MAX, &rec)) {
       ray scattered;
       v3 attenuation;
-      if (scatter(rec.mat, &r, &rec, &attenuation, &scattered)) {
+      if (scatter(&r, &rec, &attenuation, &scattered)) {
         r = scattered;
         color = v3_mul(attenuation, color);
       } else {
