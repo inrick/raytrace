@@ -1,5 +1,19 @@
-#CFLAGS := -march=native -g3 -O0 -std=gnu99 -Wall -Wextra -fno-strict-aliasing
-CFLAGS := -march=native -O3 -std=gnu99 -Wall -Wextra -fno-strict-aliasing
+#CFLAGS := \
+#  -march=native \
+#  -g3 -O0 \
+#  -std=gnu99 \
+#  -Wall \
+#  -Wextra \
+#  -Wswitch-enum \
+#  -fno-strict-aliasing
+CFLAGS := \
+  -march=native \
+  -O3 \
+  -std=gnu99 \
+  -Wall \
+  -Wextra \
+  -Wswitch-enum \
+  -fno-strict-aliasing
 BIN := ray
 
 # make bin phony to always rebuild
