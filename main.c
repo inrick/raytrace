@@ -8,6 +8,10 @@
 #include <stdlib.h> // drand48 seems to require gnu extension
 #include <unistd.h>
 
+#ifndef NSAMPLES
+#define NSAMPLES 1
+#endif
+
 // vector begin
 typedef struct {
   float x, y, z;
@@ -402,7 +406,7 @@ static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
 static void raytrace(void) {
   size_t nx = 600;
   size_t ny = 300;
-  size_t ns = 100;
+  size_t ns = NSAMPLES;
 
   v3 lookfrom = {11,1.8,5};
   v3 lookat = {0,0,-1};
