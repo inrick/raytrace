@@ -8,6 +8,9 @@
 #include <stdlib.h> // drand48 seems to require gnu extension
 #include <unistd.h>
 
+//#define STB_IMAGE_WRITE_IMPLEMENTATION
+//#include "stb_image_write.h"
+
 #ifndef NSAMPLES
 #define NSAMPLES 10
 #endif
@@ -481,4 +484,5 @@ static void raytrace(void) {
     }
   }
   ppm_write_stdout(buf, sizeof buf, nx, ny);
+  //stbi_write_jpg_to_func(stbi__stdio_write, stdout, nx, ny, 3, buf, 90);
 }
