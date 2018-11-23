@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 #ifndef NSAMPLES
-#define NSAMPLES 1
+#define NSAMPLES 10
 #endif
 
 // vector begin
@@ -331,16 +331,18 @@ static v3 ray_color(ray *r0, scene *sc) {
       color = v3_mul(
           color, v3_add(
               v3_kmul(1.0-t, v3_one),
-              v3_kmul(t, (v3){0.5, 0.7, 1.0})));
+              v3_kmul(t, (v3){0.75, 0.95, 1.0})));
       break;
     }
   }
   return color;
 }
 
+/*
 static scene random_scene() {
   size_t nspheres = 500; // some extra room, should calculate this properly
   sphere *spheres = calloc(nspheres, sizeof(*spheres));
+  assert(spheres);
   spheres[0] = (sphere){
     .center = {0,-1000,0},
     .radius = 1000,
@@ -396,6 +398,42 @@ static scene random_scene() {
   };
   return (scene){.nspheres = i, .spheres = spheres};
 }
+*/
+
+static scene small_scene() {
+  size_t nspheres = 3+360/15;
+  sphere *spheres = calloc(nspheres, sizeof(*spheres));
+  assert(spheres);
+  spheres[0] = (sphere){
+    .center = {0,-1000,0},
+    .radius = 1000,
+    .mat = {.type = MATTE, .matte.albedo = (v3){0.88,0.96,0.7}},
+  };
+  spheres[1] = (sphere){
+    .center = {1.5,1,0},
+    .radius = 1,
+    .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5},
+  };
+  spheres[2] = (sphere){
+    .center = {-1.5,1,0},
+    .radius = 1,
+    .mat = {.type = METAL, .metal = {.albedo = {0.8,0.9,0.8}, .fuzz = 0.0}},
+  };
+  size_t i = 3;
+  for (int deg = 0; deg < 360; deg += 15) {
+    float x = sin(deg*M_PI/180.0);
+    float z = cos(deg*M_PI/180.0);
+    float R0 = 3;
+    float R1 = 0.33+x*z/9;
+    spheres[i++] = (sphere){
+      .center = {R0*x,R1,R0*z},
+      .radius = R1,
+      .mat = {.type = MATTE, .matte.albedo = {x,0.5+x*z/2,z}},
+    };
+  }
+  assert(nspheres >= i); // in case calculation is off
+  return (scene){.nspheres = i, .spheres = spheres};
+}
 
 static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
   printf("P6\n%zu %zu 255\n", x, y);
@@ -408,26 +446,19 @@ static void raytrace(void) {
   size_t ny = 300;
   size_t ns = NSAMPLES;
 
-  v3 lookfrom = {11,1.8,5};
-  v3 lookat = {0,0,-1};
+  //v3 lookfrom = {11,1.8,5};
+  //v3 lookat = {0,0,-1};
+  v3 lookfrom = {10,2.5,5};
+  v3 lookat = {-4,0,-2};
   float dist_to_focus = v3_norm(v3_sub(lookfrom, lookat));
   float aperture = 0.05;
   camera cam = camera_new(
     lookfrom, lookat, (v3){0,1,0}, 20,
     (float)nx / (float)ny, aperture, dist_to_focus
   );
-  /*sphere spheres[] = {
-    {.center = {0,0,-1},      .radius =  0.5,  .mat = {.type = MATTE, .matte.albedo = (v3){0.2,0.4,0.7}}},
-    {.center = {0,-100.5,-1}, .radius =  100,  .mat = {.type = MATTE, .matte.albedo = (v3){0.8,0.8,0.0}}},
-    {.center = {1,0,-1},      .radius =  0.5,  .mat = {.type = METAL, .metal = {.albedo = (v3){0.6,0.6,0.2}, .fuzz = 0.2}}},
-    {.center = {-1,0,-1},     .radius =  0.5,  .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
-    {.center = {-1,0,-1},     .radius = -0.45, .mat = {.type = DIELECTRIC, .dielectric.ref_idx = 1.5}},
-  };
-  size_t nspheres = sizeof(spheres)/sizeof(spheres[0]);
-  scene sc = (scene){nspheres, spheres};*/
 
   // leak memory in scene since program quits anyway
-  scene sc = random_scene();
+  scene sc = small_scene();
 
   uint8_t buf[nx*ny*3];
   size_t bi = 0;
