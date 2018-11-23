@@ -16,55 +16,47 @@ typedef struct {
 const v3 v3_zero = (v3){0, 0, 0};
 const v3 v3_one = (v3){1, 1, 1};
 
-v3 v3_neg(v3 u) {
+static v3 v3_neg(v3 u) {
   return (v3){-u.x, -u.y, -u.z};
 }
 
-v3 v3_add(v3 u, v3 v) {
+static v3 v3_add(v3 u, v3 v) {
   return (v3){u.x+v.x, u.y+v.y, u.z+v.z};
 }
 
-v3 v3_kadd(float k, v3 u) {
-  return (v3){k+u.x, k+u.y, k+u.z};
-}
-
-v3 v3_sub(v3 u, v3 v) {
+static v3 v3_sub(v3 u, v3 v) {
   return (v3){u.x-v.x, u.y-v.y, u.z-v.z};
 }
 
-v3 v3_mul(v3 u, v3 v) {
+static v3 v3_mul(v3 u, v3 v) {
   return (v3){u.x*v.x, u.y*v.y, u.z*v.z};
 }
 
-v3 v3_kmul(float k, v3 u) {
+static v3 v3_kmul(float k, v3 u) {
   return (v3){k*u.x, k*u.y, k*u.z};
 }
 
-v3 v3_div(v3 u, v3 v) {
-  return (v3){u.x/v.x, u.y/v.y, u.z/v.z};
-}
-
-v3 v3_kdiv(v3 u, float k) {
+static v3 v3_kdiv(v3 u, float k) {
   return (v3){u.x/k, u.y/k, u.z/k};
 }
 
 // L2 norm
-float v3_norm(v3 u) {
+static float v3_norm(v3 u) {
   return sqrt(u.x*u.x + u.y*u.y + u.z*u.z);
 }
 
-v3 v3_normalize(v3 u) {
+static v3 v3_normalize(v3 u) {
   float norm = v3_norm(u);
   assert(fabsf(norm) > FLT_EPSILON); // rather not div by 0
 
   return v3_kmul(1.0/norm, u);
 }
 
-float v3_dot(v3 u, v3 v) {
+static float v3_dot(v3 u, v3 v) {
   return u.x*v.x + u.y*v.y + u.z*v.z;
 }
 
-v3 v3_cross(v3 u, v3 v) {
+static v3 v3_cross(v3 u, v3 v) {
   return (v3){
     .x = u.y*v.z - u.z*v.y,
     .y = u.z*v.x - u.x*v.z,
@@ -72,11 +64,11 @@ v3 v3_cross(v3 u, v3 v) {
   };
 }
 
-v3 v3_reflect(v3 u, v3 n) {
+static v3 v3_reflect(v3 u, v3 n) {
   return v3_sub(u, v3_kmul(2*v3_dot(u,n), n));
 }
 
-v3 random_in_unit_ball() {
+static v3 random_in_unit_ball() {
   v3 u;
   float norm = 0;
   while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
@@ -93,7 +85,7 @@ typedef struct {
 } ray;
 
 // eval ray r at param t
-v3 ray_eval(ray *r, float t) {
+static v3 ray_eval(ray *r, float t) {
   return v3_add(r->A, v3_kmul(t, r->B));
 }
 // ray end
@@ -144,7 +136,7 @@ typedef struct {
   float lrad; // lens radius
 } camera;
 
-camera camera_new(
+static camera camera_new(
     v3 lookfrom, v3 lookat, v3 vup, float vfov,
     float aspect, float aperture, float focus_dist
 ) {
@@ -173,7 +165,7 @@ camera camera_new(
   };
 }
 
-ray camera_ray_at_xy(camera *c, float x, float y) {
+static ray camera_ray_at_xy(camera *c, float x, float y) {
   v3 rd = v3_kmul(c->lrad, random_in_unit_ball());
   v3 offset = v3_add(v3_kmul(rd.x, c->u), v3_kmul(rd.y, c->v));
   v3 dir = v3_sub(
@@ -184,20 +176,20 @@ ray camera_ray_at_xy(camera *c, float x, float y) {
   return (ray){.A = v3_add(c->origin, offset), .B = dir};
 }
 
-void raytrace(void);
+static void raytrace(void);
 
 int main() {
   raytrace();
   return 0;
 }
 
-float schlick(float cosine, float ref_idx) {
+static float schlick(float cosine, float ref_idx) {
   float r0 = (1-ref_idx)/(1+ref_idx);
   r0 = r0*r0;
   return r0 + (1-r0)*pow(1-cosine, 5);
 }
 
-bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
+static bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
   v3 unormed = v3_normalize(u);
   float dt = v3_dot(unormed, n);
   float D = 1.0 - ni_over_nt*ni_over_nt*(1 - dt*dt);
@@ -212,7 +204,9 @@ bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
 // in: mat, r_in, rec
 // out: attenuation, scattered
 // out parameters are written if scatter returns true
-bool scatter(material *mat, ray *r_in, hit_record *rec, v3 *attenuation, ray *scattered) {
+static bool scatter(
+  material *mat, ray *r_in, hit_record *rec, v3 *attenuation, ray *scattered
+) {
   switch (mat->type) {
   case MATTE: {
     v3 target = v3_add(v3_add(rec->p, rec->normal), random_in_unit_ball());
@@ -266,6 +260,7 @@ bool scatter(material *mat, ray *r_in, hit_record *rec, v3 *attenuation, ray *sc
 }
 
 // The out parameter hit_record will be written to if function returns true
+static
 bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
   v3 oc = v3_sub(r->A, s->center);
   float a = v3_dot(r->B, r->B);
@@ -298,7 +293,9 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
 }
 
 // The out parameter hit_record will be written to if function returns true
-bool hit_scene(scene *sc, ray *r, float tmin, float tmax, hit_record *rec) {
+static bool hit_scene(
+  scene *sc, ray *r, float tmin, float tmax, hit_record *rec
+) {
   hit_record tmp;
   bool hit_obj = false;
   float closest = tmax;
@@ -314,7 +311,7 @@ bool hit_scene(scene *sc, ray *r, float tmin, float tmax, hit_record *rec) {
   return hit_obj;
 }
 
-v3 ray_color(ray *r, scene *sc, size_t depth) {
+static v3 ray_color(ray *r, scene *sc, size_t depth) {
   hit_record rec;
   // apparently one clips slightly above 0 to avoid "shadow acne"
   if (hit_scene(sc, r, 0.001, FLT_MAX, &rec)) {
@@ -331,7 +328,7 @@ v3 ray_color(ray *r, scene *sc, size_t depth) {
       v3_kmul(t, (v3){0.5, 0.7, 1.0}));
 }
 
-scene *random_scene() {
+static scene random_scene() {
   size_t nspheres = 500;
   sphere *spheres = calloc(nspheres, sizeof(*spheres));
   spheres[0] = (sphere){
@@ -394,13 +391,13 @@ scene *random_scene() {
   return sc;
 }
 
-void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
+static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
   printf("P6\n%zu %zu 255\n", x, y);
   fflush(stdout);
   write(STDOUT_FILENO, buf, size);
 }
 
-void raytrace(void) {
+static void raytrace(void) {
   size_t nx = 600;
   size_t ny = 300;
   size_t ns = 100;
