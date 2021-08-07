@@ -7,14 +7,26 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"runtime/pprof"
 )
 
 func main() {
 	var NSamples, SizeX, SizeY int
+	var CpuProfile string
 	flag.IntVar(&NSamples, "n", 10, "number of samples")
 	flag.IntVar(&SizeX, "x", 600, "picture width")
 	flag.IntVar(&SizeY, "y", 300, "picture height")
+	flag.StringVar(&CpuProfile, "cpuprof", "", "file to dump cpu profile")
 	flag.Parse()
+
+	if CpuProfile != "" {
+		f, err := os.Create(CpuProfile)
+		if err != nil {
+			panic(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	Raytrace(os.Stdout, NSamples, SizeX, SizeY)
 }
@@ -43,7 +55,7 @@ func Raytrace(w io.Writer, nsamples, nx, ny int) {
 				x := (float32(i) + rand.Float32()) / nxf
 				y := (float32(j-1) + rand.Float32()) / nyf
 				r := cam.RayAtXY(x, y)
-				color = color.Add(Color(r, sc))
+				color = color.Add(sc.Color(r))
 			}
 			color = color.Kdiv(float32(nsamples))
 			color = color.Sqrt()
@@ -61,23 +73,21 @@ type Ray struct {
 	Origin, Dir Vec
 }
 
-func (r Ray) Eval(t float32) Vec {
+func (r *Ray) Eval(t float32) Vec {
 	return r.Origin.Add(r.Dir.Kmul(t))
 }
 
-func Color(r Ray, sc Scene) Vec {
+func (sc Scene) Color(r Ray) Vec {
 	var rec HitRecord
-	color := VecOne
+	color := VecOne // At infinity
 	for depth := 0; depth < 50; depth++ {
 		// apparently one clips slightly above 0 to avoid "shadow acne"
-		if !sc.Hit(r, .001, math.MaxFloat32, &rec) {
+		if !sc.Hit(.001, math.MaxFloat32, r, &rec) {
 			t := .5 * (r.Dir.Normalize().Y + 1)
 			color = color.Mul(VecOne.Kmul(1 - t).Add(Vec{.75, .95, 1.0}.Kmul(t)))
 			break
 		}
-		var scattered Ray
-		var attenuation Vec
-		if Scatter(r, rec, &attenuation, &scattered) {
+		if attenuation, scattered, ok := Scatter(r, rec); ok {
 			r = scattered
 			color = attenuation.Mul(color)
 		} else {
@@ -114,7 +124,8 @@ type Sphere struct {
 	Mat    Material
 }
 
-func (s Sphere) Hit(r Ray, tmin, tmax float32, rec *HitRecord) bool {
+// Out parameter rec is written when Hit returns true, indicating a hit.
+func (s *Sphere) Hit(tmin, tmax float32, r *Ray, rec *HitRecord) bool {
 	oc := r.Origin.Sub(s.Center)
 	a := r.Dir.Dot(r.Dir)
 	b := oc.Dot(r.Dir)
@@ -142,13 +153,13 @@ type Scene struct {
 	Spheres []Sphere
 }
 
-func (sc Scene) Hit(r Ray, tmin, tmax float32, rec *HitRecord) bool {
+func (sc Scene) Hit(tmin, tmax float32, r Ray, rec *HitRecord) bool {
 	var tmp HitRecord
 	hit := false
 	closest := tmax
 
-	for _, s := range sc.Spheres {
-		if s.Hit(r, tmin, closest, &tmp) {
+	for i := range sc.Spheres {
+		if sc.Spheres[i].Hit(tmin, closest, &r, &tmp) {
 			hit = true
 			closest = tmp.T
 		}
@@ -225,19 +236,28 @@ func Refract(u, n Vec, niOverNt float32, refracted *Vec) bool {
 	return false
 }
 
-func Scatter(rayIn Ray, rec HitRecord, attenuation *Vec, scattered *Ray) bool {
+func Scatter(
+	rayIn Ray,
+	rec HitRecord,
+) (attenuation Vec, scattered Ray, ok bool) {
+	scattered.Origin = rec.P
 	switch rec.Mat.Kind {
 	case KindMatte:
 		target := rec.P.Add(rec.Normal).Add(RandomInUnitBall())
-		*attenuation = rec.Mat.Albedo
-		*scattered = Ray{Origin: rec.P, Dir: target.Sub(rec.P)}
-		return true
+		attenuation = rec.Mat.Albedo
+		scattered.Dir = target.Sub(rec.P)
+		ok = true
+		return
+
 	case KindMetal:
 		reflected := rayIn.Dir.Normalize().Reflect(rec.Normal)
-		dir := reflected.Add(RandomInUnitBall().Kmul(rec.Mat.F))
-		*attenuation = rec.Mat.Albedo
-		*scattered = Ray{Origin: rec.P, Dir: dir}
-		return dir.Dot(rec.Normal) > 0
+		fuzz := rec.Mat.F
+		dir := reflected.Add(RandomInUnitBall().Kmul(fuzz))
+		attenuation = rec.Mat.Albedo
+		scattered.Dir = dir
+		ok = dir.Dot(rec.Normal) > 0
+		return
+
 	case KindDielectric:
 		refIdx := rec.Mat.F
 		var outwardNormal Vec
@@ -251,17 +271,16 @@ func Scatter(rayIn Ray, rec HitRecord, attenuation *Vec, scattered *Ray) bool {
 			niOverNt = 1 / refIdx
 			cosine = -rayIn.Dir.Dot(rec.Normal) / rayIn.Dir.Norm()
 		}
-		var refracted Vec
-		r := Ray{Origin: rec.P}
-		if Refract(rayIn.Dir, outwardNormal, niOverNt, &refracted) &&
-			rand.Float32() >= Schlick(cosine, refIdx) {
-			r.Dir = refracted
-		} else {
-			r.Dir = rayIn.Dir.Reflect(rec.Normal)
+		var dir Vec
+		if !(Refract(rayIn.Dir, outwardNormal, niOverNt, &dir) &&
+			rand.Float32() >= Schlick(cosine, refIdx)) {
+			dir = rayIn.Dir.Reflect(rec.Normal)
 		}
-		*attenuation = VecOne
-		*scattered = r
-		return true
+		attenuation = VecOne
+		scattered.Dir = dir
+		ok = true
+		return
+
 	default:
 		panic(nil)
 	}
