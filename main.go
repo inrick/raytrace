@@ -4,34 +4,54 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"os"
 	"runtime/pprof"
+	"time"
 )
 
 func main() {
-	var NSamples, SizeX, SizeY int
-	var CpuProfile string
-	flag.IntVar(&NSamples, "n", 10, "number of samples")
-	flag.IntVar(&SizeX, "x", 600, "picture width")
-	flag.IntVar(&SizeY, "y", 300, "picture height")
-	flag.StringVar(&CpuProfile, "cpuprof", "", "file to dump cpu profile")
+	var nsamples, x, y int
+	var cpuprof, outputFile string
+	flag.IntVar(&nsamples, "n", 10, "number of samples")
+	flag.IntVar(&x, "x", 600, "picture width")
+	flag.IntVar(&y, "y", 300, "picture height")
+	flag.StringVar(&cpuprof, "cpuprof", "", "file to dump cpu profile")
+	flag.StringVar(&outputFile, "o", "-", "output file")
 	flag.Parse()
 
-	if CpuProfile != "" {
-		f, err := os.Create(CpuProfile)
+	if cpuprof != "" {
+		f, err := os.Create(cpuprof)
 		if err != nil {
-			panic(err)
+			log.Fatalf("could not open cpuprof file %q: %v", cpuprof, err)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
 
-	Raytrace(os.Stdout, NSamples, SizeX, SizeY)
+	var w io.Writer
+	switch outputFile {
+	case "-":
+		w = os.Stdout
+	default:
+		f, err := os.Create(outputFile)
+		if err != nil {
+			log.Fatalf("could not open output file %q: %v", outputFile, err)
+		}
+		defer f.Close()
+		w = f
+	}
+
+	t0 := time.Now()
+	Run(w, nsamples, x, y)
+	t1 := time.Now().Sub(t0)
+
+	fmt.Fprintf(os.Stderr, "raytracing took %.3f seconds\n", t1.Seconds())
 }
 
-func Raytrace(w io.Writer, nsamples, nx, ny int) {
+func Run(w io.Writer, nsamples, nx, ny int) {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
 	distToFocus := lookFrom.Sub(lookAt).Norm()
