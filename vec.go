@@ -5,8 +5,8 @@ import (
 )
 
 var (
-	VecZero = Vec{0, 0, 0}
-	VecOne  = Vec{1, 1, 1}
+	Zeros = Vec{0, 0, 0}
+	Ones  = Vec{1, 1, 1}
 )
 
 type Vec struct {
@@ -16,48 +16,51 @@ type Vec struct {
 func RandomInUnitBall() Vec {
 	var u Vec
 	var norm float32
-	for norm >= 1 || Abs32(norm) < Epsilon {
+	for {
 		u = Vec{X: rand.Float32(), Y: rand.Float32(), Z: rand.Float32()}
-		u = u.Kmul(2)
-		u = u.Sub(VecOne)
-		norm = u.Norm()
+		u = Kmul(2, u)
+		u = Sub(u, Ones)
+		norm = Norm(u)
+		if Epsilon <= norm && norm < 1 {
+			break
+		}
 	}
 	return u
 }
 
-func (u Vec) Neg() Vec {
+func Neg(u Vec) Vec {
 	return Vec{X: -u.X, Y: -u.Y, Z: -u.Z}
 }
 
-func (u Vec) Add(v Vec) Vec {
+func Add(u, v Vec) Vec {
 	return Vec{X: u.X + v.X, Y: u.Y + v.Y, Z: u.Z + v.Z}
 }
 
-func (u Vec) Sub(v Vec) Vec {
+func Sub(u, v Vec) Vec {
 	return Vec{X: u.X - v.X, Y: u.Y - v.Y, Z: u.Z - v.Z}
 }
 
-func (u Vec) Mul(v Vec) Vec {
+func Mul(u, v Vec) Vec {
 	return Vec{X: u.X * v.X, Y: u.Y * v.Y, Z: u.Z * v.Z}
 }
 
-func (u Vec) Kmul(k float32) Vec {
-	return Vec{X: u.X * k, Y: u.Y * k, Z: u.Z * k}
+func Kmul(k float32, u Vec) Vec {
+	return Vec{X: k * u.X, Y: k * u.Y, Z: k * u.Z}
 }
 
-func (u Vec) Kdiv(k float32) Vec {
+func Kdiv(u Vec, k float32) Vec {
 	return Vec{X: u.X / k, Y: u.Y / k, Z: u.Z / k}
 }
 
-func (u Vec) Sqrt() Vec {
+func Sqrt(u Vec) Vec {
 	return Vec{X: Sqrt32(u.X), Y: Sqrt32(u.Y), Z: Sqrt32(u.Z)}
 }
 
-func (u Vec) Dot(v Vec) float32 {
+func Dot(u, v Vec) float32 {
 	return u.X*v.X + u.Y*v.Y + u.Z*v.Z
 }
 
-func (u Vec) Cross(v Vec) Vec {
+func Cross(u, v Vec) Vec {
 	return Vec{
 		X: u.Y*v.Z - u.Z*v.Y,
 		Y: u.Z*v.X - u.X*v.Z,
@@ -65,19 +68,19 @@ func (u Vec) Cross(v Vec) Vec {
 	}
 }
 
-func (u Vec) Norm() float32 {
-	return Sqrt32(u.Dot(u))
+func Norm(u Vec) float32 {
+	return Sqrt32(Dot(u, u))
 }
 
-func (u Vec) Normalize() Vec {
-	unorm := u.Norm()
+func Normalize(u Vec) Vec {
+	unorm := Norm(u)
 	if unorm <= Epsilon {
 		panic("cannot normalize a zero vector")
 	}
-	return u.Kdiv(unorm)
+	return Kdiv(u, unorm)
 }
 
-func (u Vec) Reflect(normal Vec) Vec {
-	v := normal.Kmul(2 * u.Dot(normal))
-	return u.Sub(v)
+func Reflect(u, normal Vec) Vec {
+	v := Kmul(2*Dot(u, normal), normal)
+	return Sub(u, v)
 }

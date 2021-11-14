@@ -54,7 +54,7 @@ func main() {
 func Run(w io.Writer, nsamples, nx, ny int) {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
-	distToFocus := lookFrom.Sub(lookAt).Norm()
+	distToFocus := Norm(Sub(lookFrom, lookAt))
 	aperture := float32(.05)
 
 	nxf, nyf := float32(nx), float32(ny)
@@ -75,10 +75,10 @@ func Run(w io.Writer, nsamples, nx, ny int) {
 				x := (float32(i) + rand.Float32()) / nxf
 				y := (float32(j-1) + rand.Float32()) / nyf
 				r := cam.RayAtXY(x, y)
-				color = color.Add(sc.Color(r))
+				color = Add(color, sc.Color(&r))
 			}
-			color = color.Kdiv(float32(nsamples))
-			color = color.Sqrt()
+			color = Kdiv(color, float32(nsamples))
+			color = Sqrt(color)
 			buf[bi+0] = byte(255 * color.X)
 			buf[bi+1] = byte(255 * color.Y)
 			buf[bi+2] = byte(255 * color.Z)
@@ -94,30 +94,28 @@ type Ray struct {
 }
 
 func (r *Ray) Eval(t float32) Vec {
-	return r.Origin.Add(r.Dir.Kmul(t))
+	return Add(r.Origin, Kmul(t, r.Dir))
 }
 
-func (sc Scene) Color(r Ray) Vec {
+func (sc Scene) Color(r0 *Ray) Vec {
 	var rec HitRecord
-	color := VecOne // At infinity
+	r := *r0
+	color := Ones // At infinity
 	for depth := 0; depth < 50; depth++ {
 		// apparently one clips slightly above 0 to avoid "shadow acne"
-		if !sc.Hit(.001, math.MaxFloat32, r, &rec) {
-			t := .5 * (r.Dir.Normalize().Y + 1)
-			color = color.Mul(VecOne.Kmul(1 - t).Add(Vec{.75, .95, 1.0}.Kmul(t)))
+		if !sc.Hit(.001, math.MaxFloat32, &r, &rec) {
+			t := .5 * (Normalize(r.Dir).Y + 1)
+			color = Mul(color, Add(Kmul(t, Vec{.75, .95, 1.0}), Kmul(1-t, Ones)))
 			break
 		}
-		if attenuation, scattered, ok := Scatter(r, rec); ok {
-			r = scattered
-			color = attenuation.Mul(color)
-		} else {
-			color = VecZero
-		}
+		attenuation, scattered := Scatter(&r, &rec)
+		r = scattered
+		color = Mul(color, attenuation)
 	}
 	return color
 }
 
-type MaterialKind int
+type MaterialKind int32
 
 const (
 	KindMatte MaterialKind = iota
@@ -146,10 +144,10 @@ type Sphere struct {
 
 // Out parameter rec is written when Hit returns true, indicating a hit.
 func (s *Sphere) Hit(tmin, tmax float32, r *Ray, rec *HitRecord) bool {
-	oc := r.Origin.Sub(s.Center)
-	a := r.Dir.Dot(r.Dir)
-	b := oc.Dot(r.Dir)
-	c := oc.Dot(oc) - s.Radius*s.Radius
+	oc := Sub(r.Origin, s.Center)
+	a := Dot(r.Dir, r.Dir)
+	b := Dot(oc, r.Dir)
+	c := Dot(oc, oc) - s.Radius*s.Radius
 	D := b*b - a*c // NOTE: 4 cancels because b is no longer mult by 2
 	if D > 0 {
 		for _, t := range []float32{
@@ -160,7 +158,7 @@ func (s *Sphere) Hit(tmin, tmax float32, r *Ray, rec *HitRecord) bool {
 				rec.T = t
 				rec.P = r.Eval(t)
 				// (p-c)/r
-				rec.Normal = rec.P.Sub(s.Center).Kdiv(s.Radius)
+				rec.Normal = Kdiv(Sub(rec.P, s.Center), s.Radius)
 				rec.Mat = s.Mat
 				return true
 			}
@@ -173,18 +171,16 @@ type Scene struct {
 	Spheres []Sphere
 }
 
-func (sc Scene) Hit(tmin, tmax float32, r Ray, rec *HitRecord) bool {
-	var tmp HitRecord
+func (sc Scene) Hit(tmin, tmax float32, r *Ray, rec *HitRecord) bool {
 	hit := false
 	closest := tmax
 
 	for i := range sc.Spheres {
-		if sc.Spheres[i].Hit(tmin, closest, &r, &tmp) {
+		if sc.Spheres[i].Hit(tmin, closest, r, rec) {
 			hit = true
-			closest = tmp.T
+			closest = rec.T
 		}
 	}
-	*rec = tmp
 	return hit
 }
 
@@ -202,20 +198,20 @@ func CameraNew(
 	theta := vfov * math.Pi / 180
 	halfHeight := Tan32(theta / 2)
 	halfWidth := aspect * halfHeight
-	w := lookFrom.Sub(lookAt).Normalize()
-	u := vup.Cross(w).Normalize()
-	v := w.Cross(u)
+	w := Normalize(Sub(lookFrom, lookAt))
+	u := Normalize(Cross(vup, w))
+	v := Cross(w, u)
 
-	x := u.Kmul(halfWidth * focusDist)
-	x = lookFrom.Sub(x)
-	x = x.Sub(v.Kmul(halfHeight * focusDist))
-	x = x.Sub(w.Kmul(focusDist))
+	x := Kmul(halfWidth*focusDist, u)
+	x = Sub(lookFrom, x)
+	x = Sub(x, Kmul(halfHeight*focusDist, v))
+	x = Sub(x, Kmul(focusDist, w))
 	lowerLeftCorner := x
 
 	return Camera{
 		LowerLeftCorner: lowerLeftCorner,
-		Horiz:           u.Kmul(2 * halfWidth * focusDist),
-		Vert:            v.Kmul(2 * halfHeight * focusDist),
+		Horiz:           Kmul(2*halfWidth*focusDist, u),
+		Vert:            Kmul(2*halfHeight*focusDist, v),
 		Origin:          lookFrom,
 		U:               u,
 		V:               v,
@@ -225,14 +221,14 @@ func CameraNew(
 }
 
 func (c *Camera) RayAtXY(x, y float32) Ray {
-	rd := RandomInUnitBall().Kmul(c.LensRadius)
-	offset := c.U.Kmul(rd.X).Add(c.V.Kmul(rd.Y))
+	rd := Kmul(c.LensRadius, RandomInUnitBall())
+	offset := Add(Kmul(rd.X, c.U), Kmul(rd.Y, c.V))
 
-	dir := c.Horiz.Kmul(x).Add(c.Vert.Kmul(y))
-	dir = c.LowerLeftCorner.Add(dir)
-	dir = dir.Sub(c.Origin)
-	dir = dir.Sub(offset)
-	return Ray{Origin: c.Origin.Add(offset), Dir: dir}
+	dir := Add(Kmul(x, c.Horiz), Kmul(y, c.Vert))
+	dir = Add(c.LowerLeftCorner, dir)
+	dir = Sub(dir, c.Origin)
+	dir = Sub(dir, offset)
+	return Ray{Origin: Add(c.Origin, offset), Dir: dir}
 }
 
 func Schlick(cosine, refIdx float32) float32 {
@@ -242,14 +238,11 @@ func Schlick(cosine, refIdx float32) float32 {
 }
 
 func Refract(u, n Vec, niOverNt float32, refracted *Vec) bool {
-	un := u.Normalize()
-	dt := un.Dot(n)
+	un := Normalize(u)
+	dt := Dot(un, n)
 	D := 1 - niOverNt*niOverNt*(1-dt*dt)
 	if D > 0 {
-		v := n.Kmul(dt)
-		v = un.Sub(v)
-		v = v.Kmul(niOverNt)
-		v = v.Sub(n.Kmul(Sqrt32(D)))
+		v := Sub(Kmul(niOverNt, Sub(un, Kmul(dt, n))), Kmul(Sqrt32(D), n))
 		*refracted = v
 		return true
 	}
@@ -257,49 +250,52 @@ func Refract(u, n Vec, niOverNt float32, refracted *Vec) bool {
 }
 
 func Scatter(
-	rayIn Ray,
-	rec HitRecord,
-) (attenuation Vec, scattered Ray, ok bool) {
-	scattered.Origin = rec.P
+	r0 *Ray,
+	rec *HitRecord,
+) (attenuation Vec, scattered Ray) {
 	switch rec.Mat.Kind {
 	case KindMatte:
-		target := rec.P.Add(rec.Normal).Add(RandomInUnitBall())
+		target := Add(Add(rec.P, rec.Normal), RandomInUnitBall())
 		attenuation = rec.Mat.Albedo
-		scattered.Dir = target.Sub(rec.P)
-		ok = true
-		return
+		scattered.Origin = rec.P
+		scattered.Dir = Sub(target, rec.P)
+		return attenuation, scattered
 
 	case KindMetal:
-		reflected := rayIn.Dir.Normalize().Reflect(rec.Normal)
+		reflected := Reflect(Normalize(r0.Dir), rec.Normal)
 		fuzz := rec.Mat.F
-		dir := reflected.Add(RandomInUnitBall().Kmul(fuzz))
+		dir := Add(reflected, Kmul(fuzz, RandomInUnitBall()))
 		attenuation = rec.Mat.Albedo
-		scattered.Dir = dir
-		ok = dir.Dot(rec.Normal) > 0
-		return
+		if Dot(dir, rec.Normal) > 0 {
+			scattered.Origin = rec.P
+			scattered.Dir = dir
+		} else {
+			scattered = *r0
+		}
+		return attenuation, scattered
 
 	case KindDielectric:
 		refIdx := rec.Mat.F
 		var outwardNormal Vec
 		var niOverNt, cosine float32
-		if rayIn.Dir.Dot(rec.Normal) > 0 {
-			outwardNormal = rec.Normal.Neg()
+		if Dot(r0.Dir, rec.Normal) > 0 {
+			outwardNormal = Neg(rec.Normal)
 			niOverNt = refIdx
-			cosine = refIdx * rayIn.Dir.Dot(rec.Normal) / rayIn.Dir.Norm()
+			cosine = refIdx * Dot(r0.Dir, rec.Normal) / Norm(r0.Dir)
 		} else {
 			outwardNormal = rec.Normal
 			niOverNt = 1 / refIdx
-			cosine = -rayIn.Dir.Dot(rec.Normal) / rayIn.Dir.Norm()
+			cosine = -Dot(r0.Dir, rec.Normal) / Norm(r0.Dir)
 		}
 		var dir Vec
-		if !(Refract(rayIn.Dir, outwardNormal, niOverNt, &dir) &&
+		if !(Refract(r0.Dir, outwardNormal, niOverNt, &dir) &&
 			rand.Float32() >= Schlick(cosine, refIdx)) {
-			dir = rayIn.Dir.Reflect(rec.Normal)
+			dir = Reflect(r0.Dir, rec.Normal)
 		}
-		attenuation = VecOne
+		attenuation = Ones
+		scattered.Origin = rec.P
 		scattered.Dir = dir
-		ok = true
-		return
+		return attenuation, scattered
 
 	default:
 		panic(nil)
