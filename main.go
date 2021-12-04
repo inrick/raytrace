@@ -342,16 +342,11 @@ func SmallScene() Scene {
 
 func PpmWrite(w io.Writer, buf []byte, x, y int) {
 	fmt.Fprintf(w, "P6\n%d %d 255\n", x, y)
-	N := len(buf)
-	var written int
-	for {
+	for len(buf) > 0 {
 		n, err := w.Write(buf)
-		written += n
 		if err != nil {
 			panic(err)
 		}
-		if written == N {
-			break
-		}
+		buf = buf[n:]
 	}
 }
