@@ -64,6 +64,14 @@ impl Vec {
   pub fn sqrt(self) -> Vec {
     vec(self.x.sqrt(), self.y.sqrt(), self.z.sqrt())
   }
+
+  pub fn norm(self) -> f32 {
+    dot(self, self).sqrt()
+  }
+
+  pub fn normalize(self) -> Vec {
+    self/self.norm()
+  }
 }
 
 
@@ -79,14 +87,6 @@ pub fn dot(u: Vec, v: Vec) -> f32 {
   u.x*v.x + u.y*v.y + u.z*v.z
 }
 
-pub fn norm(u: Vec) -> f32 {
-  dot(u, u).sqrt()
-}
-
-pub fn normalize(u: Vec) -> Vec {
-  u/norm(u)
-}
-
 pub fn reflect(u: Vec, normal: Vec) -> Vec {
   u - normal*2.*dot(u, normal)
 }
@@ -98,7 +98,7 @@ fn rand32() -> f32 {
 pub fn random_in_unit_ball() -> Vec {
   loop {
     let u = vec(rand32(), rand32(), rand32()) * 2. - ONES;
-    if norm(u) < 1. {
+    if u.norm() < 1. {
       return u;
     }
   }

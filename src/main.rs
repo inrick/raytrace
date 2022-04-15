@@ -1,8 +1,11 @@
 use std::vec::Vec as Array;
 use std::vec as array;
 use std::io::Write;
-use std::io;
 use std::fs::File;
+use std::ffi::OsStr;
+use std::path::PathBuf;
+
+use clap::Parser;
 
 mod vec;
 use vec::*;
@@ -13,17 +16,72 @@ fn rand32() -> f32 {
 
 static PI: f32 = std::f32::consts::PI;
 
+#[derive(Parser, Debug)]
+struct Args {
+  /// Output filename (supports .ppm/.png/.jpg)
+  #[clap(short, long, default_value = "out.png")]
+  output: PathBuf,
+
+  /// Number of random samples per ray
+  #[clap(short, long, default_value_t = 10)]
+  nsamples: u32,
+}
+
+type Error = Box<dyn std::error::Error>;
+type Result = ::std::result::Result<(), Error>;
+
+type ImageWriter = fn(&mut File, &Array<u8>, u32, u32) -> Result;
+
 fn main() {
-  let mut f = File::create("out.png").unwrap();
-  if let Err(err) = run(&mut f, 10, 600, 300) {
+  let args = Args::parse();
+  if let Err(err) = run(args) {
     eprintln!("ERROR: {}", err);
+    std::process::exit(1);
   }
 }
 
-fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) -> io::Result<()> {
+fn run(args: Args) -> Result {
+  // Decide image output format by the given file extension
+  let extension = args.output.extension()
+    .and_then(OsStr::to_str)
+    .map(|s| s.to_lowercase());
+  let image_writer: ImageWriter = match extension.as_ref().map(String::as_ref) {
+    Some("ppm") => ppm_write,
+    Some("png") => |f, buf, x, y| {
+      image::write_buffer_with_format(
+        f, buf, x, y,
+        image::ColorType::Rgb8,
+        image::ImageOutputFormat::Png,
+      )?;
+      Ok(())
+    },
+    Some("jpg" | "jpeg") => |f, buf, x, y| {
+      image::write_buffer_with_format(
+        f, buf, x, y,
+        image::ColorType::Rgb8,
+        image::ImageOutputFormat::Jpeg(90),
+      )?;
+      Ok(())
+    },
+    Some(unknown) =>
+      Err(format!(
+        "unknown image output format for file extension '{}' (only know ppm/png/jpg)",
+        unknown,
+      ))?,
+    None => Err("missing file extension")?,
+  };
+
+  let mut f = File::create(args.output).unwrap();
+
+  raytrace(image_writer, &mut f, args.nsamples, 600, 300)
+}
+
+fn raytrace(
+  writer: ImageWriter, f: &mut File, nsamples: u32, nx: u32, ny: u32,
+) -> Result {
   let look_from = vec(10., 2.5, 5.);
   let look_at = vec(-4., 0., -2.);
-  let dist_to_focus = norm(look_from - look_at);
+  let dist_to_focus = (look_from - look_at).norm();
   let aperture = 0.05;
 
   let (nxf, nyf) = (nx as f32, ny as f32);
@@ -54,23 +112,13 @@ fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) -> io::Result<()> {
     }
   }
 
-  png_write(f, &buf, nx, ny)?;
+  writer(f, &buf, nx, ny)?;
   Ok(())
 }
 
-#[allow(dead_code)]
-fn ppm_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) -> io::Result<()> {
+fn ppm_write(f: &mut File, buf: &Array<u8>, x: u32, y: u32) -> Result {
   f.write(format!("P6\n{} {} 255\n", x, y).as_bytes())?;
   f.write_all(buf)?;
-  Ok(())
-}
-
-fn png_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) -> io::Result<()> {
-  image::write_buffer_with_format(
-    f, buf, x as u32, y as u32,
-    image::ColorType::Rgb8,
-    image::ImageOutputFormat::Png,
-  ).unwrap(); // TODO: how to convert to a common error type?
   Ok(())
 }
 
@@ -150,7 +198,7 @@ impl Scene {
     let mut color = ONES;
     for _depth in 0..50 {
       if !self.hit(0.001, f32::MAX, &mut r, &mut rec) {
-        let t = 0.5 * (normalize(r.dir).y + 1.);
+        let t = 0.5 * (r.dir.normalize().y + 1.);
         color = color * (vec(0.75, 0.95, 1.0)*t + ONES*(1.-t));
         break;
       }
@@ -194,8 +242,8 @@ impl Camera {
     let theta = vfov * PI / 180.;
     let half_height = (theta / 2.).tan();
     let half_width = aspect*half_height;
-    let w = normalize(look_from - look_at);
-    let u = normalize(cross(v_up, w));
+    let w = (look_from - look_at).normalize();
+    let u = cross(v_up, w).normalize();
     let v = cross(w, u);
     let lower_left_corner =
       look_from
@@ -232,7 +280,7 @@ fn schlick(cosine: f32, ref_idx: f32) -> f32 {
 
 #[allow(non_snake_case)]
 fn refract(u: Vec, normal: Vec, ni_over_nt: f32, refracted: &mut Vec) -> bool {
-  let un = normalize(u);
+  let un = u.normalize();
   let dt = dot(un, normal);
   let D = 1. - ni_over_nt*ni_over_nt*(1.-dt*dt);
   if D > 0. {
@@ -252,7 +300,7 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
       (albedo, scattered)
     }
     Metal{albedo, fuzz} => {
-      let reflected = reflect(normalize(r.dir), normal);
+      let reflected = reflect(r.dir.normalize(), normal);
       let dir = reflected + random_in_unit_ball()*fuzz;
       let scattered: Ray;
       if dot(dir, normal) > 0. {
@@ -270,11 +318,11 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
       if d > 0. {
         outward_normal = -normal;
         ni_over_nt = ref_idx;
-        cosine = ref_idx * d / norm(r.dir);
+        cosine = ref_idx * d / r.dir.norm();
       } else {
         outward_normal = normal;
         ni_over_nt = 1. / ref_idx;
-        cosine = -d / norm(r.dir);
+        cosine = -d / r.dir.norm();
       }
       let mut dir = Vec::default();
       if !refract(r.dir, outward_normal, ni_over_nt, &mut dir)
