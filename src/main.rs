@@ -1,11 +1,11 @@
-mod vec;
-use vec::*;
-
 use std::vec::Vec as Array;
 use std::vec as array;
 use std::io::Write;
 use std::io;
 use std::fs::File;
+
+mod vec;
+use vec::*;
 
 fn rand32() -> f32 {
   rand::random()
@@ -14,9 +14,9 @@ fn rand32() -> f32 {
 static PI: f32 = std::f32::consts::PI;
 
 fn main() {
-  let mut f = File::create("out.ppm").unwrap();
+  let mut f = File::create("out.png").unwrap();
   if let Err(err) = run(&mut f, 10, 600, 300) {
-      eprintln!("ERROR: {}", err);
+    eprintln!("ERROR: {}", err);
   }
 }
 
@@ -54,13 +54,23 @@ fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) -> io::Result<()> {
     }
   }
 
-  ppm_write(f, &buf, nx, ny)?;
+  png_write(f, &buf, nx, ny)?;
   Ok(())
 }
 
+#[allow(dead_code)]
 fn ppm_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) -> io::Result<()> {
   f.write(format!("P6\n{} {} 255\n", x, y).as_bytes())?;
   f.write_all(buf)?;
+  Ok(())
+}
+
+fn png_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) -> io::Result<()> {
+  image::write_buffer_with_format(
+    f, buf, x as u32, y as u32,
+    image::ColorType::Rgb8,
+    image::ImageOutputFormat::Png,
+  ).unwrap(); // TODO: how to convert to a common error type?
   Ok(())
 }
 
