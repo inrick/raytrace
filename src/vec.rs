@@ -1,13 +1,13 @@
 use std::ops::{Add, Mul, Sub, Div, Neg};
 
 #[derive(Default, Debug, Clone, Copy)]
-struct Vec {
-  x: f32, y: f32, z: f32
+pub struct Vec {
+  pub x: f32, pub y: f32, pub z: f32
 }
 
-static ONES: Vec = Vec{x: 1., y: 1., z: 1.};
+pub static ONES: Vec = Vec{x: 1., y: 1., z: 1.};
 
-fn vec(x: f32, y: f32, z: f32) -> Vec {
+pub fn vec(x: f32, y: f32, z: f32) -> Vec {
   Vec{x, y, z}
 }
 
@@ -61,13 +61,13 @@ impl Neg for Vec {
 }
 
 impl Vec {
-  fn sqrt(self) -> Vec {
+  pub fn sqrt(self) -> Vec {
     vec(self.x.sqrt(), self.y.sqrt(), self.z.sqrt())
   }
 }
 
 
-fn cross(u: Vec, v: Vec) -> Vec {
+pub fn cross(u: Vec, v: Vec) -> Vec {
   vec(
     u.y*v.z - u.z*v.y,
     u.z*v.x - u.x*v.z,
@@ -75,23 +75,27 @@ fn cross(u: Vec, v: Vec) -> Vec {
   )
 }
 
-fn dot(u: Vec, v: Vec) -> f32 {
+pub fn dot(u: Vec, v: Vec) -> f32 {
   u.x*v.x + u.y*v.y + u.z*v.z
 }
 
-fn norm(u: Vec) -> f32 {
+pub fn norm(u: Vec) -> f32 {
   dot(u, u).sqrt()
 }
 
-fn normalize(u: Vec) -> Vec {
+pub fn normalize(u: Vec) -> Vec {
   u/norm(u)
 }
 
-fn reflect(u: Vec, normal: Vec) -> Vec {
+pub fn reflect(u: Vec, normal: Vec) -> Vec {
   u - normal*2.*dot(u, normal)
 }
 
-fn random_in_unit_ball() -> Vec {
+fn rand32() -> f32 {
+  rand::random()
+}
+
+pub fn random_in_unit_ball() -> Vec {
   loop {
     let u = vec(rand32(), rand32(), rand32()) * 2. - ONES;
     if norm(u) < 1. {

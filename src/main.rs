@@ -1,22 +1,26 @@
-use std::vec::{Vec as Array};
-use std::{vec as array};
+mod vec;
+use vec::*;
+
+use std::vec::Vec as Array;
+use std::vec as array;
 use std::io::Write;
+use std::io;
 use std::fs::File;
 
 fn rand32() -> f32 {
   rand::random()
 }
 
-include!("vec.rs");
-
 static PI: f32 = std::f32::consts::PI;
 
 fn main() {
   let mut f = File::create("out.ppm").unwrap();
-  run(&mut f, 100, 600, 300);
+  if let Err(err) = run(&mut f, 10, 600, 300) {
+      eprintln!("ERROR: {}", err);
+  }
 }
 
-fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) {
+fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) -> io::Result<()> {
   let look_from = vec(10., 2.5, 5.);
   let look_at = vec(-4., 0., -2.);
   let dist_to_focus = norm(look_from - look_at);
@@ -50,12 +54,14 @@ fn run(f: &mut File, nsamples: i32, nx: i32, ny: i32) {
     }
   }
 
-  ppm_write(f, &buf, nx, ny);
+  ppm_write(f, &buf, nx, ny)?;
+  Ok(())
 }
 
-fn ppm_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) {
-  f.write(format!("P6\n{} {} 255\n", x, y).as_bytes()).unwrap();
-  f.write_all(buf).unwrap();
+fn ppm_write(f: &mut File, buf: &Array<u8>, x: i32, y: i32) -> io::Result<()> {
+  f.write(format!("P6\n{} {} 255\n", x, y).as_bytes())?;
+  f.write_all(buf)?;
+  Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -188,14 +194,12 @@ impl Camera {
       - w*focus_dist;
 
     Camera{
-      lower_left_corner: lower_left_corner,
-      horiz:       u*2.*half_width*focus_dist,
-      vert:        v*2.*half_height*focus_dist,
-      origin:      look_from,
-      u:         u,
-      v:         v,
-      w:         w,
-      lens_radius:     aperture / 2.,
+      lower_left_corner,
+      horiz: u*2.*half_width*focus_dist,
+      vert: v*2.*half_height*focus_dist,
+      origin: look_from,
+      u, v, w,
+      lens_radius: aperture / 2.,
     }
   }
 
@@ -206,7 +210,7 @@ impl Camera {
       self.lower_left_corner
       + (self.horiz*x + self.vert*y)
       - self.origin - offset;
-    Ray{origin: self.origin + offset, dir: dir}
+    Ray{origin: self.origin + offset, dir}
   }
 }
 
@@ -242,7 +246,7 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
       let dir = reflected + random_in_unit_ball()*fuzz;
       let scattered: Ray;
       if dot(dir, normal) > 0. {
-        scattered = Ray{origin: p, dir: dir};
+        scattered = Ray{origin: p, dir};
       } else {
         scattered = *r;
       }
@@ -267,13 +271,12 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
         || rand32() < schlick(cosine, ref_idx) {
         dir = reflect(r.dir, normal);
       }
-      let scattered = Ray{origin: p, dir: dir};
+      let scattered = Ray{origin: p, dir};
       (ONES, scattered)
     }
   }
 }
 
-#[allow(non_snake_case)]
 fn small_scene() -> Scene {
   let nspheres = 3 + 360/15;
   let mut spheres = Array::with_capacity(nspheres);
@@ -297,11 +300,11 @@ fn small_scene() -> Scene {
   for deg in (0..360).step_by(15) {
     let x = ((deg as f32) * PI / 180.).sin();
     let z = ((deg as f32) * PI / 180.).cos();
-    let R0 = 3.;
-    let R1 = 0.33 + x*z/9.;
+    let r0 = 3.;
+    let r1 = 0.33 + x*z/9.;
     spheres.push(Sphere{
-      center: vec(R0*x, R1, R0*z),
-      radius: R1,
+      center: vec(r0*x, r1, r0*z),
+      radius: r1,
       mat: Material::Matte{albedo: vec(x, 0.5+x*z/2., z)},
     });
   }
