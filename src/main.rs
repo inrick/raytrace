@@ -44,10 +44,11 @@ fn run(args: Args) -> Result {
   // Decide image output format by the given file extension
   let extension = args.output.extension()
     .and_then(OsStr::to_str)
-    .map(|s| s.to_lowercase());
-  let image_writer: ImageWriter = match extension.as_ref().map(String::as_ref) {
-    Some("ppm") => ppm_write,
-    Some("png") => |f, buf, x, y| {
+    .map(|s| s.to_lowercase())
+    .ok_or_else(|| "missing file extension")?;
+  let image_writer: ImageWriter = match extension.as_ref() {
+    "ppm" => ppm_write,
+    "png" => |f, buf, x, y| {
       image::write_buffer_with_format(
         f, buf, x, y,
         image::ColorType::Rgb8,
@@ -55,7 +56,7 @@ fn run(args: Args) -> Result {
       )?;
       Ok(())
     },
-    Some("jpg" | "jpeg") => |f, buf, x, y| {
+    "jpg" | "jpeg" => |f, buf, x, y| {
       image::write_buffer_with_format(
         f, buf, x, y,
         image::ColorType::Rgb8,
@@ -63,12 +64,12 @@ fn run(args: Args) -> Result {
       )?;
       Ok(())
     },
-    Some(unknown) =>
+    unknown =>
       Err(format!(
-        "unknown image output format for file extension '{}' (only know ppm/png/jpg)",
+        "unknown image output format for file extension '{}' \
+        (only know ppm/png/jpg)",
         unknown,
       ))?,
-    None => Err("missing file extension")?,
   };
 
   let mut f = File::create(args.output).unwrap();
