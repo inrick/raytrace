@@ -1,5 +1,3 @@
-use std::vec::Vec as Array;
-use std::vec as array;
 use std::io::Write;
 use std::fs::File;
 use std::ffi::OsStr;
@@ -30,7 +28,7 @@ struct Args {
 type Error = Box<dyn std::error::Error>;
 type Result = ::std::result::Result<(), Error>;
 
-type ImageWriter = fn(&mut File, &Array<u8>, u32, u32) -> Result;
+type ImageWriter = fn(&mut File, &Vec<u8>, u32, u32) -> Result;
 
 fn main() {
   let args = Args::parse();
@@ -72,13 +70,11 @@ fn run(args: Args) -> Result {
       ))?,
   };
 
-  let mut f = File::create(args.output).unwrap();
-
-  raytrace(image_writer, &mut f, args.nsamples, 600, 300)
+  raytrace(image_writer, args.output, args.nsamples, 600, 300)
 }
 
 fn raytrace(
-  writer: ImageWriter, f: &mut File, nsamples: u32, nx: u32, ny: u32,
+  writer: ImageWriter, filename: PathBuf, nsamples: u32, nx: u32, ny: u32,
 ) -> Result {
   let look_from = vec(10., 2.5, 5.);
   let look_at = vec(-4., 0., -2.);
@@ -94,11 +90,11 @@ fn raytrace(
 
   let sc = small_scene();
 
-  let mut buf = array![0; (3*nx*ny) as usize];
+  let mut buf = vec![0; (3*nx*ny) as usize];
   let mut bi = 0;
   for j in (0..ny).rev() {
     for i in 0..nx {
-      let mut color = Vec::default();
+      let mut color = Vec3::default();
       for _ in 0..nsamples {
         let x = (i as f32 + rand32()) / nxf;
         let y = (j as f32 + rand32()) / nyf;
@@ -113,11 +109,12 @@ fn raytrace(
     }
   }
 
-  writer(f, &buf, nx, ny)?;
+  let mut f = File::create(filename)?;
+  writer(&mut f, &buf, nx, ny)?;
   Ok(())
 }
 
-fn ppm_write(f: &mut File, buf: &Array<u8>, x: u32, y: u32) -> Result {
+fn ppm_write(f: &mut File, buf: &Vec<u8>, x: u32, y: u32) -> Result {
   f.write(format!("P6\n{} {} 255\n", x, y).as_bytes())?;
   f.write_all(buf)?;
   Ok(())
@@ -125,26 +122,26 @@ fn ppm_write(f: &mut File, buf: &Array<u8>, x: u32, y: u32) -> Result {
 
 #[derive(Clone, Copy)]
 struct Ray {
-  origin: Vec, dir: Vec
+  origin: Vec3, dir: Vec3
 }
 
 impl Ray {
-  fn eval(self, t: f32) -> Vec {
+  fn eval(self, t: f32) -> Vec3 {
     self.origin + self.dir*t
   }
 }
 
 #[derive(Copy, Clone)]
 enum Material {
-  Matte      { albedo: Vec },
-  Metal      { albedo: Vec, fuzz: f32 },
+  Matte      { albedo: Vec3 },
+  Metal      { albedo: Vec3, fuzz: f32 },
   Dielectric { ref_idx: f32 },
 }
 
 struct HitRecord {
   t:      f32,
-  p:      Vec,
-  normal: Vec,
+  p:      Vec3,
+  normal: Vec3,
   mat:    Material,
 }
 
@@ -152,15 +149,15 @@ impl Default for HitRecord {
   fn default() -> Self {
     HitRecord{
       t: 0.,
-      p: Vec::default(),
-      normal: Vec::default(),
-      mat: Material::Matte{albedo: Vec::default()},
+      p: Vec3::default(),
+      normal: Vec3::default(),
+      mat: Material::Matte{albedo: Vec3::default()},
     }
   }
 }
 
 struct Sphere {
-  center: Vec,
+  center: Vec3,
   radius: f32,
   mat:    Material,
 }
@@ -189,11 +186,11 @@ impl Sphere {
 }
 
 struct Scene {
-  spheres: Array<Sphere>,
+  spheres: Vec<Sphere>,
 }
 
 impl Scene {
-  fn color(&self, r0: &Ray) -> Vec {
+  fn color(&self, r0: &Ray) -> Vec3 {
     let mut rec: HitRecord = HitRecord::default();
     let mut r = *r0;
     let mut color = ONES;
@@ -225,19 +222,19 @@ impl Scene {
 
 #[allow(dead_code)]
 struct Camera {
-  lower_left_corner: Vec,
-  horiz:             Vec,
-  vert:              Vec,
-  origin:            Vec,
-  u:                 Vec,
-  v:                 Vec,
-  w:                 Vec,
+  lower_left_corner: Vec3,
+  horiz:             Vec3,
+  vert:              Vec3,
+  origin:            Vec3,
+  u:                 Vec3,
+  v:                 Vec3,
+  w:                 Vec3,
   lens_radius:       f32,
 }
 
 impl Camera {
   fn new(
-    look_from: Vec, look_at: Vec, v_up: Vec,
+    look_from: Vec3, look_at: Vec3, v_up: Vec3,
     vfov: f32, aspect: f32, aperture: f32, focus_dist: f32,
   ) -> Self {
     let theta = vfov * PI / 180.;
@@ -280,7 +277,7 @@ fn schlick(cosine: f32, ref_idx: f32) -> f32 {
 }
 
 #[allow(non_snake_case)]
-fn refract(u: Vec, normal: Vec, ni_over_nt: f32, refracted: &mut Vec) -> bool {
+fn refract(u: Vec3, normal: Vec3, ni_over_nt: f32, refracted: &mut Vec3) -> bool {
   let un = u.normalize();
   let dt = dot(un, normal);
   let D = 1. - ni_over_nt*ni_over_nt*(1.-dt*dt);
@@ -292,7 +289,7 @@ fn refract(u: Vec, normal: Vec, ni_over_nt: f32, refracted: &mut Vec) -> bool {
   false
 }
 
-fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
+fn scatter(r: &Ray, p: Vec3, normal: Vec3, mat: Material) -> (Vec3, Ray) {
   use Material::*;
   match mat {
     Matte{albedo} => {
@@ -313,7 +310,7 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
     }
     Dielectric{ref_idx} => {
       let d = dot(r.dir, normal);
-      let outward_normal: Vec;
+      let outward_normal: Vec3;
       let ni_over_nt: f32;
       let cosine: f32;
       if d > 0. {
@@ -325,7 +322,7 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
         ni_over_nt = 1. / ref_idx;
         cosine = -d / r.dir.norm();
       }
-      let mut dir = Vec::default();
+      let mut dir = Vec3::default();
       if !refract(r.dir, outward_normal, ni_over_nt, &mut dir)
         || rand32() < schlick(cosine, ref_idx) {
         dir = reflect(r.dir, normal);
@@ -338,7 +335,7 @@ fn scatter(r: &Ray, p: Vec, normal: Vec, mat: Material) -> (Vec, Ray) {
 
 fn small_scene() -> Scene {
   let nspheres = 3 + 360/15;
-  let mut spheres = Array::with_capacity(nspheres);
+  let mut spheres = Vec::with_capacity(nspheres);
 
   spheres.push(Sphere{
     center: vec(0., -1000., 0.),
