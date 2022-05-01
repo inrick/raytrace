@@ -3,12 +3,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
+	"strings"
 	"time"
 )
 
@@ -31,11 +37,26 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	var write ImageWriter
 	var w io.Writer
 	switch outputFile {
 	case "-":
+		write = WritePPM
 		w = os.Stdout
 	default:
+		switch ext := strings.ToLower(filepath.Ext(outputFile)); ext {
+		case ".png":
+			write = WritePNG
+		case ".jpg", ".jpeg":
+			write = WriteJPG
+		case ".ppm":
+			write = WritePPM
+		default:
+			log.Fatalf(
+				"unsupported file extension %q (supported: ppm, png, jpg/jpeg)",
+				ext,
+			)
+		}
 		f, err := os.Create(outputFile)
 		if err != nil {
 			log.Fatalf("could not open output file %q: %v", outputFile, err)
@@ -45,13 +66,15 @@ func main() {
 	}
 
 	t0 := time.Now()
-	Run(w, nsamples, x, y)
+	Run(write, w, nsamples, x, y)
 	t1 := time.Now().Sub(t0)
 
 	fmt.Fprintf(os.Stderr, "raytracing took %.3f seconds\n", t1.Seconds())
 }
 
-func Run(w io.Writer, nsamples, nx, ny int) {
+type ImageWriter func(io.Writer, []byte, int, int)
+
+func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
 	distToFocus := Norm(Sub(lookFrom, lookAt))
@@ -86,7 +109,7 @@ func Run(w io.Writer, nsamples, nx, ny int) {
 		}
 	}
 
-	PpmWrite(w, buf, nx, ny)
+	write(w, buf, nx, ny)
 }
 
 type Ray struct {
@@ -333,10 +356,34 @@ func SmallScene() Scene {
 	return Scene{spheres}
 }
 
-func PpmWrite(w io.Writer, buf []byte, x, y int) {
-	fmt.Fprintf(w, "P6\n%d %d 255\n", x, y)
+func WritePPM(w io.Writer, buf []byte, width, height int) {
+	fmt.Fprintf(w, "P6\n%d %d 255\n", width, height)
 	n, err := w.Write(buf)
 	if n != len(buf) || err != nil {
+		panic(err)
+	}
+}
+
+func bufToImage(buf []byte, width, height int) image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for i := 0; i < len(buf); i += 3 {
+		x := i / 3 % width
+		y := i / 3 / width
+		img.Set(x, y, color.NRGBA{buf[i+0], buf[i+1], buf[i+2], 255})
+	}
+	return img
+}
+
+func WriteJPG(w io.Writer, buf []byte, width, height int) {
+	img := bufToImage(buf, width, height)
+	if err := jpeg.Encode(w, img, &jpeg.Options{Quality: 90}); err != nil {
+		panic(err)
+	}
+}
+
+func WritePNG(w io.Writer, buf []byte, width, height int) {
+	img := bufToImage(buf, width, height)
+	if err := png.Encode(w, img); err != nil {
 		panic(err)
 	}
 }
