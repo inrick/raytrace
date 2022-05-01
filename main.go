@@ -108,7 +108,7 @@ func (sc Scene) Color(r0 *Ray) Vec {
 			color = Mul(color, Add(Kmul(t, Vec{.75, .95, 1.0}), Kmul(1-t, Ones)))
 			break
 		}
-		attenuation, scattered := Scatter(&r, &rec)
+		attenuation, scattered := Scatter(&r, rec.P, rec.Normal, rec.Mat)
 		r = scattered
 		color = Mul(color, attenuation)
 	}
@@ -202,14 +202,13 @@ func CameraNew(
 	u := Normalize(Cross(vup, w))
 	v := Cross(w, u)
 
-	x := Kmul(halfWidth*focusDist, u)
-	x = Sub(lookFrom, x)
-	x = Sub(x, Kmul(halfHeight*focusDist, v))
-	x = Sub(x, Kmul(focusDist, w))
-	lowerLeftCorner := x
+	llc := Kmul(halfWidth*focusDist, u)
+	llc = Sub(lookFrom, llc)
+	llc = Sub(llc, Kmul(halfHeight*focusDist, v))
+	llc = Sub(llc, Kmul(focusDist, w))
 
 	return Camera{
-		LowerLeftCorner: lowerLeftCorner,
+		LowerLeftCorner: llc,
 		Horiz:           Kmul(2*halfWidth*focusDist, u),
 		Vert:            Kmul(2*halfHeight*focusDist, v),
 		Origin:          lookFrom,
@@ -249,53 +248,47 @@ func Refract(u, n Vec, niOverNt float32, refracted *Vec) bool {
 	return false
 }
 
-func Scatter(
-	r0 *Ray,
-	rec *HitRecord,
-) (attenuation Vec, scattered Ray) {
-	switch rec.Mat.Kind {
+func Scatter(r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
+	switch mat.Kind {
 	case KindMatte:
-		target := Add(Add(rec.P, rec.Normal), RandomInUnitBall())
-		attenuation = rec.Mat.Albedo
-		scattered.Origin = rec.P
-		scattered.Dir = Sub(target, rec.P)
-		return attenuation, scattered
+		// p+normal+random
+		target := Add(Add(p, normal), RandomInUnitBall())
+		scattered := Ray{Origin: p, Dir: Sub(target, p)}
+		return mat.Albedo, scattered
 
 	case KindMetal:
-		reflected := Reflect(Normalize(r0.Dir), rec.Normal)
-		fuzz := rec.Mat.F
-		dir := Add(reflected, Kmul(fuzz, RandomInUnitBall()))
-		attenuation = rec.Mat.Albedo
-		if Dot(dir, rec.Normal) > 0 {
-			scattered.Origin = rec.P
+		reflected := Reflect(Normalize(r.Dir), normal)
+		dir := Add(reflected, Kmul(mat.F, RandomInUnitBall()))
+		var scattered Ray
+		if Dot(dir, normal) > 0 {
+			scattered.Origin = p
 			scattered.Dir = dir
 		} else {
-			scattered = *r0
+			scattered = *r
 		}
-		return attenuation, scattered
+		return mat.Albedo, scattered
 
 	case KindDielectric:
-		refIdx := rec.Mat.F
+		refIdx := mat.F
 		var outwardNormal Vec
 		var niOverNt, cosine float32
-		if Dot(r0.Dir, rec.Normal) > 0 {
-			outwardNormal = Neg(rec.Normal)
+		dot := Dot(r.Dir, normal)
+		if dot > 0 {
+			outwardNormal = Neg(normal)
 			niOverNt = refIdx
-			cosine = refIdx * Dot(r0.Dir, rec.Normal) / Norm(r0.Dir)
+			cosine = refIdx * dot / Norm(r.Dir)
 		} else {
-			outwardNormal = rec.Normal
+			outwardNormal = normal
 			niOverNt = 1 / refIdx
-			cosine = -Dot(r0.Dir, rec.Normal) / Norm(r0.Dir)
+			cosine = -dot / Norm(r.Dir)
 		}
 		var dir Vec
-		if !(Refract(r0.Dir, outwardNormal, niOverNt, &dir) &&
-			rand.Float32() >= Schlick(cosine, refIdx)) {
-			dir = Reflect(r0.Dir, rec.Normal)
+		if !Refract(r.Dir, outwardNormal, niOverNt, &dir) ||
+			rand.Float32() < Schlick(cosine, refIdx) {
+			dir = Reflect(r.Dir, normal)
 		}
-		attenuation = Ones
-		scattered.Origin = rec.P
-		scattered.Dir = dir
-		return attenuation, scattered
+		scattered := Ray{Origin: p, Dir: dir}
+		return Ones, scattered
 
 	default:
 		panic(nil)
@@ -342,11 +335,8 @@ func SmallScene() Scene {
 
 func PpmWrite(w io.Writer, buf []byte, x, y int) {
 	fmt.Fprintf(w, "P6\n%d %d 255\n", x, y)
-	for len(buf) > 0 {
-		n, err := w.Write(buf)
-		if err != nil {
-			panic(err)
-		}
-		buf = buf[n:]
+	n, err := w.Write(buf)
+	if n != len(buf) || err != nil {
+		panic(err)
 	}
 }
