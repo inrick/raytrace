@@ -1,23 +1,19 @@
 package main
 
-import (
-	"math/rand"
-)
-
 var (
 	Zeros = Vec{0, 0, 0}
 	Ones  = Vec{1, 1, 1}
 )
 
 type Vec struct {
-	X, Y, Z float32
+	X, Y, Z float
 }
 
 func RandomInUnitBall() Vec {
 	var u Vec
-	var norm float32
+	var norm float
 	for {
-		u = Vec{X: rand.Float32(), Y: rand.Float32(), Z: rand.Float32()}
+		u = Vec{X: Rand(), Y: Rand(), Z: Rand()}
 		u = Kmul(2, u)
 		u = Sub(u, Ones)
 		norm = Norm(u)
@@ -44,19 +40,19 @@ func Mul(u, v Vec) Vec {
 	return Vec{X: u.X * v.X, Y: u.Y * v.Y, Z: u.Z * v.Z}
 }
 
-func Kmul(k float32, u Vec) Vec {
+func Kmul(k float, u Vec) Vec {
 	return Vec{X: k * u.X, Y: k * u.Y, Z: k * u.Z}
 }
 
-func Kdiv(u Vec, k float32) Vec {
+func Kdiv(u Vec, k float) Vec {
 	return Vec{X: u.X / k, Y: u.Y / k, Z: u.Z / k}
 }
 
-func Sqrt(u Vec) Vec {
-	return Vec{X: Sqrt32(u.X), Y: Sqrt32(u.Y), Z: Sqrt32(u.Z)}
+func (u Vec) Sqrt() Vec {
+	return Vec{X: Sqrt(u.X), Y: Sqrt(u.Y), Z: Sqrt(u.Z)}
 }
 
-func Dot(u, v Vec) float32 {
+func Dot(u, v Vec) float {
 	return u.X*v.X + u.Y*v.Y + u.Z*v.Z
 }
 
@@ -68,8 +64,8 @@ func Cross(u, v Vec) Vec {
 	}
 }
 
-func Norm(u Vec) float32 {
-	return Sqrt32(Dot(u, u))
+func Norm(u Vec) float {
+	return Sqrt(Dot(u, u))
 }
 
 func Normalize(u Vec) Vec {
