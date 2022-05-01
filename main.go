@@ -15,7 +15,11 @@ import (
 	"runtime/pprof"
 	"strings"
 	"time"
+
+	"ray/m"
 )
+
+type float = m.Float
 
 func main() {
 	var nsamples, x, y int
@@ -94,13 +98,13 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) {
 		for i := 0; i < nx; i++ {
 			var color Vec
 			for s := 0; s < nsamples; s++ {
-				x := (float(i+0) + Rand()) / nxf
-				y := (float(j-1) + Rand()) / nyf
+				x := (float(i+0) + m.Rand()) / nxf
+				y := (float(j-1) + m.Rand()) / nyf
 				r := cam.RayAtXY(x, y)
 				color = Add(color, sc.Color(&r))
 			}
 			color = Kdiv(color, float(nsamples))
-			color = color.Sqrt()
+			color = Sqrt(color)
 			buf[bi+0] = byte(255 * color.X)
 			buf[bi+1] = byte(255 * color.Y)
 			buf[bi+2] = byte(255 * color.Z)
@@ -125,7 +129,7 @@ func (sc Scene) Color(r0 *Ray) Vec {
 	color := Ones // At infinity
 	for depth := 0; depth < 50; depth++ {
 		// apparently one clips slightly above 0 to avoid "shadow acne"
-		if !sc.Hit(.001, MaxFloat, &r, &rec) {
+		if !sc.Hit(.001, m.MaxFloat, &r, &rec) {
 			t := .5 * (Normalize(r.Dir).Y + 1)
 			color = Mul(color, Add(Kmul(t, Vec{.75, .95, 1.0}), Kmul(1-t, Ones)))
 			break
@@ -173,8 +177,8 @@ func (s *Sphere) Hit(tmin, tmax float, r *Ray, rec *HitRecord) bool {
 	D := b*b - a*c // NOTE: 4 cancels because b is no longer mult by 2
 	if D > 0 {
 		for _, t := range []float{
-			(-b - Sqrt(D)) / a,
-			(-b + Sqrt(D)) / a,
+			(-b - m.Sqrt(D)) / a,
+			(-b + m.Sqrt(D)) / a,
 		} {
 			if tmin < t && t < tmax {
 				rec.T = t
@@ -218,7 +222,7 @@ func CameraNew(
 	vfov, aspect, aperture, focusDist float,
 ) Camera {
 	theta := vfov * math.Pi / 180
-	halfHeight := Tan(theta / 2)
+	halfHeight := m.Tan(theta / 2)
 	halfWidth := aspect * halfHeight
 	w := Normalize(Sub(lookFrom, lookAt))
 	u := Normalize(Cross(vup, w))
@@ -255,7 +259,7 @@ func (c *Camera) RayAtXY(x, y float) Ray {
 func Schlick(cosine, refIdx float) float {
 	r0 := (1 - refIdx) / (1 + refIdx)
 	r0 = r0 * r0
-	return r0 + (1-r0)*Pow(1-cosine, 5)
+	return r0 + (1-r0)*m.Pow(1-cosine, 5)
 }
 
 func Refract(u, n Vec, niOverNt float, refracted *Vec) bool {
@@ -263,7 +267,7 @@ func Refract(u, n Vec, niOverNt float, refracted *Vec) bool {
 	dt := Dot(un, n)
 	D := 1 - niOverNt*niOverNt*(1-dt*dt)
 	if D > 0 {
-		v := Sub(Kmul(niOverNt, Sub(un, Kmul(dt, n))), Kmul(Sqrt(D), n))
+		v := Sub(Kmul(niOverNt, Sub(un, Kmul(dt, n))), Kmul(m.Sqrt(D), n))
 		*refracted = v
 		return true
 	}
@@ -306,7 +310,7 @@ func Scatter(r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
 		}
 		var dir Vec
 		if !Refract(r.Dir, outwardNormal, niOverNt, &dir) ||
-			Rand() < Schlick(cosine, refIdx) {
+			m.Rand() < Schlick(cosine, refIdx) {
 			dir = Reflect(r.Dir, normal)
 		}
 		scattered := Ray{Origin: p, Dir: dir}
@@ -340,8 +344,8 @@ func SmallScene() Scene {
 	i := 3
 	for deg := 0; deg < 360; deg += 15 {
 		var x, z, R0, R1 float
-		x = Sin(float(deg) * math.Pi / 180)
-		z = Cos(float(deg) * math.Pi / 180)
+		x = m.Sin(float(deg) * math.Pi / 180)
+		z = m.Cos(float(deg) * math.Pi / 180)
 		R0 = 3
 		R1 = .33 + x*z/9
 		spheres[i] = Sphere{

@@ -1,11 +1,14 @@
 //go:build !math64
 
-package main
+package m // import "ray/m"
 
 import (
 	"math"
 	"math/rand"
 )
+
+// Exported name
+type Float = float
 
 type float = float32
 
