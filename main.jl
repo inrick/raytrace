@@ -128,7 +128,7 @@ function scatter(r0::Ray, p::Vec, normal::Vec, mat::Dielectric)
   return ones(Elem, 3), scattered
 end
 
-struct HitRecord
+mutable struct HitRecord
   t::Elem
   p::Vec
   normal::Vec
@@ -150,10 +150,10 @@ struct Scene
 end
 
 function scene_color(sc::Scene, r::Ray)::Vec
+  rec = HitRecord(0, zeros(3), zeros(3), Matte(zeros(3)))
   color = ones(Elem, 3) # at infinity
   for depth = 1:50
-    rec = hit(sc, Elem(.001), prevfloat(typemax(Elem)), r)
-    if rec == nothing
+    if !hit(sc, Elem(.001), prevfloat(typemax(Elem)), r, rec)
       t = .5 * (normalize(r.dir)[2] + 1)
       color = color .* (t*Elem[.75, .95, 1.] + (1-t)*ones(Elem, 3))
       break
@@ -181,7 +181,7 @@ function random_in_unit_ball()::Vec
   end
 end
 
-function hit(s::Sphere, tmin::Elem, tmax::Elem, r::Ray)::Union{HitRecord,Nothing}
+function hit(s::Sphere, tmin::Elem, tmax::Elem, r::Ray, rec::HitRecord)::Bool
   oc = r.origin - s.center
   a = r.dir'*r.dir
   b = oc'*r.dir
@@ -191,25 +191,27 @@ function hit(s::Sphere, tmin::Elem, tmax::Elem, r::Ray)::Union{HitRecord,Nothing
     for t = [(-b-sqrt(D))/a, (-b+sqrt(D))/a]
       if tmin < t < tmax
         p = eval_ray(r, t)
-        return HitRecord(t, p, (p-s.center)/s.radius, s.material)
+        rec.t = t
+        rec.p = p
+        rec.normal = (p-s.center)/s.radius
+        rec.material = s.material
+        return true
       end
     end
   end
-  return nothing
+  return false
 end
 
-function hit(sc::Scene, tmin::Elem, tmax::Elem, r::Ray)
-  rec_ret = nothing
+function hit(sc::Scene, tmin::Elem, tmax::Elem, r::Ray, rec::HitRecord)
+  did_hit = false
   closest = tmax
   for i = 1:length(sc.spheres)
-    rec = hit(sc.spheres[i], tmin, closest, r)
-    if rec != nothing
-      rec_ret = rec
-      rec0 = rec
+    if hit(sc.spheres[i], tmin, closest, r, rec)
+      did_hit = true
       closest = rec.t
     end
   end
-  return rec_ret
+  return did_hit
 end
 
 function small_scene()::Scene
@@ -234,14 +236,6 @@ function small_scene()::Scene
   return Scene(spheres)
 end
 
-function mysqrt(x::Elem)::Elem
-  if x < 0
-    return 0
-  else
-    return sqrt(x)
-  end
-end
-
 function main()
   width, height = 600, 300
   wf, hf = Elem(width), Elem(height)
@@ -256,14 +250,15 @@ function main()
   )
   sc = small_scene()
   buf = zeros(UInt8, 3, width, height)
-  for j = 1:width
-    for i = 1:height
+  for i = 1:height
+    for j = 1:width
       color = zeros(Elem, 3)
       for s = 1:nsamples
         x = (j + rand(Elem)) / wf
-        y = (height-i + rand(Elem)) / hf
+        y = (height-i+1 + rand(Elem)) / hf
         color = color + scene_color(sc, ray_at_xy(cam, x, y))
       end
+      # Want NaN in case color is negative
       color = @fastmath sqrt.(color / Elem(nsamples))
       buf[:,j,i] = unsafe_trunc.(UInt8, 255*color)
     end
