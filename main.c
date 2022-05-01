@@ -8,185 +8,28 @@
 #include <stdlib.h> // drand48 seems to require gnu extension
 #include <unistd.h>
 
+#include "vec.c"
+#include "structs.c"
+
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
 //#include "stb_image_write.h"
 
-#ifndef NSAMPLES
-#define NSAMPLES 10
-#endif
+static void raytrace(size_t);
 
-// vector begin
-typedef struct {
-  float x, y, z;
-} v3;
-
-const v3 v3_zero = (v3){0, 0, 0};
-const v3 v3_one = (v3){1, 1, 1};
-
-static v3 v3_neg(v3 u) {
-  return (v3){-u.x, -u.y, -u.z};
-}
-
-static v3 v3_add(v3 u, v3 v) {
-  return (v3){u.x+v.x, u.y+v.y, u.z+v.z};
-}
-
-static v3 v3_sub(v3 u, v3 v) {
-  return (v3){u.x-v.x, u.y-v.y, u.z-v.z};
-}
-
-static v3 v3_mul(v3 u, v3 v) {
-  return (v3){u.x*v.x, u.y*v.y, u.z*v.z};
-}
-
-static v3 v3_kmul(float k, v3 u) {
-  return (v3){k*u.x, k*u.y, k*u.z};
-}
-
-static v3 v3_kdiv(v3 u, float k) {
-  return (v3){u.x/k, u.y/k, u.z/k};
-}
-
-// L2 norm
-static float v3_norm(v3 u) {
-  return sqrt(u.x*u.x + u.y*u.y + u.z*u.z);
-}
-
-static v3 v3_normalize(v3 u) {
-  float norm = v3_norm(u);
-  assert(fabsf(norm) > FLT_EPSILON); // rather not div by 0
-
-  return v3_kmul(1.0/norm, u);
-}
-
-static float v3_dot(v3 u, v3 v) {
-  return u.x*v.x + u.y*v.y + u.z*v.z;
-}
-
-static v3 v3_cross(v3 u, v3 v) {
-  return (v3){
-    .x = u.y*v.z - u.z*v.y,
-    .y = u.z*v.x - u.x*v.z,
-    .z = u.x*v.y - u.y*v.x,
-  };
-}
-
-static v3 v3_reflect(v3 u, v3 n) {
-  return v3_sub(u, v3_kmul(2*v3_dot(u,n), n));
-}
-
-static v3 random_in_unit_ball() {
-  v3 u;
-  float norm = 0;
-  while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
-    u = v3_sub(v3_kmul(2, (v3){drand48(), drand48(), drand48()}), v3_one);
-    norm = v3_norm(u);
+int main(int argc, char** argv) {
+  int opt;
+  size_t nsamples = 10;
+  while ((opt = getopt(argc, argv, "n:")) != -1) {
+    switch (opt) {
+    case 'n':
+      assert(sscanf(optarg, "%zu", &nsamples));
+      break;
+    default:
+      fprintf(stderr, "Usage: %s [-n <number of samples>] > output_file.ppm\n", argv[0]);
+      exit(1);
+    }
   }
-  return u;
-}
-// vector end
-
-// ray begin
-typedef struct {
-  v3 A, B; // origin, direction
-} ray;
-
-// eval ray r at param t
-static v3 ray_eval(ray *r, float t) {
-  return v3_add(r->A, v3_kmul(t, r->B));
-}
-// ray end
-
-typedef enum {
-  MATTE,
-  METAL,
-  DIELECTRIC,
-} material_t;
-
-typedef struct {
-  material_t type;
-  union {
-    struct {
-      v3 albedo;
-    } matte;
-    struct {
-      v3 albedo;
-      float fuzz;
-    } metal;
-    struct {
-      float ref_idx;
-    } dielectric;
-  };
-} material;
-
-typedef struct {
-  float t;
-  v3 p;
-  v3 normal;
-  material *mat;
-} hit_record;
-
-typedef struct {
-  v3 center;
-  float radius;
-  material mat;
-} sphere;
-
-typedef struct {
-  size_t nspheres;
-  sphere *spheres;
-} scene;
-
-typedef struct {
-  v3 llc; // lower left corner
-  v3 horiz, vert, origin, u, v, w;
-  float lrad; // lens radius
-} camera;
-
-static camera camera_new(
-    v3 lookfrom, v3 lookat, v3 vup, float vfov,
-    float aspect, float aperture, float focus_dist
-) {
-  float theta = vfov*M_PI/180;
-  float half_height = tan(theta/2);
-  float half_width = aspect * half_height;
-  v3 w = v3_normalize(v3_sub(lookfrom, lookat));
-  v3 u = v3_normalize(v3_cross(vup, w));
-  v3 v = v3_cross(w, u);
-  v3 llc = v3_sub(
-      v3_sub(
-          v3_sub(
-              lookfrom,
-              v3_kmul(half_width*focus_dist, u)),
-          v3_kmul(half_height*focus_dist, v)),
-      v3_kmul(focus_dist, w));
-  return (camera){
-    .llc    = llc,
-    .horiz  = v3_kmul(2*half_width*focus_dist, u),
-    .vert   = v3_kmul(2*half_height*focus_dist, v),
-    .origin = lookfrom,
-    .u      = u,
-    .v      = v,
-    .w      = w,
-    .lrad   = aperture/2,
-  };
-}
-
-static ray camera_ray_at_xy(camera *c, float x, float y) {
-  v3 rd = v3_kmul(c->lrad, random_in_unit_ball());
-  v3 offset = v3_add(v3_kmul(rd.x, c->u), v3_kmul(rd.y, c->v));
-  v3 dir = v3_sub(
-      v3_sub(
-          v3_add(c->llc, v3_add(v3_kmul(x, c->horiz), v3_kmul(y, c->vert))),
-          c->origin),
-      offset);
-  return (ray){.A = v3_add(c->origin, offset), .B = dir};
-}
-
-static void raytrace(void);
-
-int main() {
-  raytrace();
+  raytrace(nsamples);
   return 0;
 }
 
@@ -201,10 +44,10 @@ static bool refract(v3 u, v3 n, float ni_over_nt, v3 *refracted) {
   float dt = v3_dot(unormed, n);
   float D = 1.0 - ni_over_nt*ni_over_nt*(1 - dt*dt);
   if (D > 0) {
-    v3 ref = v3_sub(
-        v3_kmul(ni_over_nt, v3_sub(unormed, v3_kmul(dt, n))),
-        v3_kmul(sqrt(D), n));
-    memcpy(refracted, &ref, sizeof(*refracted));
+    *refracted = v3_sub(
+      v3_kmul(ni_over_nt, v3_sub(unormed, v3_kmul(dt, n))),
+      v3_kmul(sqrt(D), n)
+    );
     return true;
   }
   return false;
@@ -220,17 +63,15 @@ static bool scatter(
   switch (mat->type) {
   case MATTE: {
     v3 target = v3_add(v3_add(rec->p, rec->normal), random_in_unit_ball());
-    ray r = {.A = rec->p, .B = v3_sub(target, rec->p)};
-    memcpy(attenuation, &mat->matte.albedo, sizeof(*attenuation));
-    memcpy(scattered, &r, sizeof(*scattered));
+    *attenuation = mat->matte.albedo;
+    *scattered = (ray){.A = rec->p, .B = v3_sub(target, rec->p)};;
     return true;
   }
   case METAL: {
     v3 reflected = v3_reflect(v3_normalize(r_in->B), rec->normal);
     v3 dir = v3_add(reflected, v3_kmul(mat->metal.fuzz, random_in_unit_ball()));
-    ray r = {.A = rec->p, .B = dir};
-    memcpy(attenuation, &mat->metal.albedo, sizeof(*attenuation));
-    memcpy(scattered, &r, sizeof(*scattered));
+    *attenuation = mat->metal.albedo;
+    *scattered = (ray){.A = rec->p, .B = dir};;
     return v3_dot(scattered->B, rec->normal) > 0;
   }
   case DIELECTRIC: {
@@ -255,8 +96,8 @@ static bool scatter(
     } else {
       r = (ray){.A = rec->p, .B = v3_reflect(r_in->B, rec->normal)};
     }
-    memcpy(attenuation, &v3_one, sizeof(*attenuation));
-    memcpy(scattered, &r, sizeof(*scattered));
+    *attenuation = v3_one;
+    *scattered = r;
     return true;
   }
   default:
@@ -274,25 +115,17 @@ bool hit_sphere(sphere *s, ray *r, float tmin, float tmax, hit_record *rec) {
   float c = v3_dot(oc, oc) - s->radius*s->radius;
   float D = b*b - a*c; // NOTE: 4 cancels because b no longer mult by 2
   if (D > 0) {
-    // try first root
-    float t = (-b - sqrt(D))/a;
-    if (tmin < t && t < tmax) {
-      rec->t = t;
-      rec->p = ray_eval(r, t);
-      // (p-c)/r
-      rec->normal = v3_kdiv(v3_sub(rec->p, s->center), s->radius);
-      rec->mat = &s->mat;
-      return true;
-    }
-    // try second root
-    t = (-b + sqrt(D))/a;
-    if (tmin < t && t < tmax) {
-      rec->t = t;
-      rec->p = ray_eval(r, t);
-      // (p-c)/r
-      rec->normal = v3_kdiv(v3_sub(rec->p, s->center), s->radius);
-      rec->mat = &s->mat;
-      return true;
+    float tt[] = {(-b - sqrt(D))/a, (-b + sqrt(D))/a};
+    for (int i = 0; i < 2; i++) {
+      float t = tt[i];
+      if (tmin < t && t < tmax) {
+        rec->t = t;
+        rec->p = ray_eval(r, t);
+        // (p-c)/r
+        rec->normal = v3_kdiv(v3_sub(rec->p, s->center), s->radius);
+        rec->mat = &s->mat;
+        return true;
+      }
     }
   }
   return false;
@@ -305,13 +138,14 @@ static bool hit_scene(
   hit_record tmp;
   bool hit_obj = false;
   float closest = tmax;
-  size_t nspheres = sc->nspheres;
+  size_t N = sc->nspheres;
   sphere *spheres = sc->spheres;
-  for (size_t i = 0; i < nspheres; i++) {
+
+  for (size_t i = 0; i < N; i++) {
     if (hit_sphere(&spheres[i], r, tmin, closest, &tmp)) {
       hit_obj = true;
       closest = tmp.t;
-      memcpy(rec, &tmp, sizeof tmp);
+      *rec = tmp;
     }
   }
   return hit_obj;
@@ -335,9 +169,9 @@ static v3 ray_color(ray *r0, scene *sc) {
     } else {
       float t = 0.5*(v3_normalize(r.B).y + 1.0);
       color = v3_mul(
-          color, v3_add(
-              v3_kmul(1.0-t, v3_one),
-              v3_kmul(t, (v3){0.75, 0.95, 1.0})));
+        color, v3_add(
+          v3_kmul(1.0-t, v3_one),
+          v3_kmul(t, (v3){0.75, 0.95, 1.0})));
       break;
     }
   }
@@ -429,6 +263,7 @@ static scene small_scene() {
   size_t nspheres = 3+360/15;
   sphere *spheres = calloc(nspheres, sizeof(*spheres));
   assert(spheres);
+
   spheres[0] = (sphere){
     .center = {0,-1000,0},
     .radius = 1000,
@@ -444,6 +279,7 @@ static scene small_scene() {
     .radius = 1,
     .mat = {.type = METAL, .metal = {.albedo = {0.8,0.9,0.8}, .fuzz = 0.0}},
   };
+
   size_t i = 3;
   for (int deg = 0; deg < 360; deg += 15) {
     float x = sin(deg*M_PI/180.0);
@@ -456,6 +292,7 @@ static scene small_scene() {
       .mat = {.type = MATTE, .matte.albedo = {x,0.5+x*z/2,z}},
     };
   }
+
   assert(nspheres >= i); // in case calculation is off
   return (scene){.nspheres = i, .spheres = spheres};
 }
@@ -466,10 +303,8 @@ static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
   write(STDOUT_FILENO, buf, size);
 }
 
-static void raytrace(void) {
-  size_t nx = 600;
-  size_t ny = 300;
-  size_t ns = NSAMPLES;
+static void raytrace(size_t nsamples) {
+  size_t nx = 600, ny = 300;
 
   //v3 lookfrom = {11,1.8,5};
   //v3 lookat = {0,0,-1};
@@ -482,7 +317,6 @@ static void raytrace(void) {
     (float)nx / (float)ny, aperture, dist_to_focus
   );
 
-  // leak memory in scene since program quits anyway
   scene sc = small_scene();
 
   uint8_t buf[nx*ny*3];
@@ -491,20 +325,22 @@ static void raytrace(void) {
     for (size_t i = 0; i < nx; i++) {
       v3 color = v3_zero;
       // anti-alias by averaging color around random nearby samples
-      for (size_t s = 0; s < ns; s++) {
+      for (size_t s = 0; s < nsamples; s++) {
         float x = (float)(i+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
         color = v3_add(color, ray_color(&r, &sc));
       }
-      color = v3_kdiv(color, (float)ns);
+      color = v3_kdiv(color, (float)nsamples);
       color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
-      buf[bi+0] = (255.99 * color.x);
-      buf[bi+1] = (255.99 * color.y);
-      buf[bi+2] = (255.99 * color.z);
+      buf[bi+0] = (255.0f * color.x);
+      buf[bi+1] = (255.0f * color.y);
+      buf[bi+2] = (255.0f * color.z);
       bi += 3;
     }
   }
+
+  free(sc.spheres);
   ppm_write_stdout(buf, sizeof buf, nx, ny);
   //stbi_write_jpg_to_func(stbi__stdio_write, stdout, nx, ny, 3, buf, 90);
 }
