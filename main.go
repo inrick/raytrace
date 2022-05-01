@@ -69,15 +69,19 @@ func main() {
 	}
 
 	t0 := time.Now()
-	Run(write, w, nsamples, x, y)
+	err := Run(write, w, nsamples, x, y)
 	t1 := time.Now().Sub(t0)
+
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
 
 	fmt.Fprintf(os.Stderr, "raytracing took %.3f seconds\n", t1.Seconds())
 }
 
-type ImageWriter func(io.Writer, []byte, int, int)
+type ImageWriter func(io.Writer, []byte, int, int) error
 
-func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) {
+func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
 	distToFocus := Norm(Sub(lookFrom, lookAt))
@@ -112,7 +116,7 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) {
 		}
 	}
 
-	write(w, buf, nx, ny)
+	return write(w, buf, nx, ny)
 }
 
 type Ray struct {
@@ -359,12 +363,10 @@ func SmallScene() Scene {
 	return Scene{spheres}
 }
 
-func WritePPM(w io.Writer, buf []byte, width, height int) {
+func WritePPM(w io.Writer, buf []byte, width, height int) error {
 	fmt.Fprintf(w, "P6\n%d %d 255\n", width, height)
-	n, err := w.Write(buf)
-	if n != len(buf) || err != nil {
-		panic(err)
-	}
+	_, err := w.Write(buf)
+	return err
 }
 
 func bufToImage(buf []byte, width, height int) image.Image {
@@ -377,16 +379,12 @@ func bufToImage(buf []byte, width, height int) image.Image {
 	return img
 }
 
-func WriteJPG(w io.Writer, buf []byte, width, height int) {
+func WriteJPG(w io.Writer, buf []byte, width, height int) error {
 	img := bufToImage(buf, width, height)
-	if err := jpeg.Encode(w, img, &jpeg.Options{Quality: 90}); err != nil {
-		panic(err)
-	}
+	return jpeg.Encode(w, img, &jpeg.Options{Quality: 90})
 }
 
-func WritePNG(w io.Writer, buf []byte, width, height int) {
+func WritePNG(w io.Writer, buf []byte, width, height int) error {
 	img := bufToImage(buf, width, height)
-	if err := png.Encode(w, img); err != nil {
-		panic(err)
-	}
+	return png.Encode(w, img)
 }
