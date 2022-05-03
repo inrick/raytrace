@@ -11,25 +11,103 @@
 #include "vec.c"
 #include "structs.c"
 
-//#define STB_IMAGE_WRITE_IMPLEMENTATION
-//#include "stb_image_write.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "lib/stb_image_write.h"
 
-static void raytrace(size_t);
+typedef void image_write_fn(FILE*, uint8_t*, size_t, size_t, size_t);
+
+static image_write_fn ppm_write;
+static image_write_fn png_write;
+static image_write_fn jpg_write;
+
+static void raytrace(image_write_fn, FILE*, size_t);
+
+static char* argv0;
+
+void usage(void) {
+  fprintf(
+    stderr,
+    "Usage: %s [-n <number of samples>] [-o <output file>.<ppm/png/jpg>]\n"
+    "\n"
+    "If <output file> is '-' then a ppm image is written on stdout.\n"
+    "\n"
+    "Examples:\n"
+    "\n",
+    argv0);
+  fprintf(stderr, "	%s -n 100 -o out.jpg\n", argv0);
+  fprintf(stderr, "	%s -o out.ppm\n", argv0);
+  fprintf(stderr, "	%s -o - > out.ppm\n", argv0);
+  exit(1);
+}
 
 int main(int argc, char** argv) {
+  argv0 = argv[0];
+
   int opt;
   size_t nsamples = 10;
-  while ((opt = getopt(argc, argv, "n:")) != -1) {
+  FILE* fp = NULL;
+  image_write_fn* iwrite = ppm_write;
+
+  while ((opt = getopt(argc, argv, "o:n:")) != -1) {
     switch (opt) {
-    case 'n':
-      assert(sscanf(optarg, "%zu", &nsamples));
-      break;
+    case 'o': {
+      if (strcmp(optarg, "-") == 0) {
+        fp = stdout;
+        break;
+      }
+      char* ext = strrchr(optarg, '.');
+      if (ext == NULL) {
+        fprintf(
+          stderr,
+          "missing file name extension, support ppm/png/jpg\n");
+        usage();
+      } else if (strcasecmp(ext, ".png") == 0) {
+        iwrite = png_write;
+      } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+        iwrite = jpg_write;
+      } else if (strcasecmp(ext, ".ppm") == 0) {
+        iwrite = ppm_write;
+      } else {
+        fprintf(
+          stderr,
+          "unsupported file extension: %s (only support ppm/png/jpg)\n",
+          ext);
+        usage();
+      }
+      fp = fopen(optarg, "wb");
+      if (fp == NULL) {
+        perror("could not open output file");
+        exit(1);
+      }
+    } break;
+    case 'n': {
+      char* endptr = NULL;
+      long n = strtol(optarg, &endptr, 10);
+      if (n <= 0 || strcmp("", endptr) != 0) {
+        fprintf(
+          stderr,
+          "invalid number of samples (%s), must be a positive integer\n",
+          optarg);
+        usage();
+      }
+      nsamples = (size_t) n;
+    } break;
     default:
-      fprintf(stderr, "Usage: %s [-n <number of samples>] > output_file.ppm\n", argv[0]);
-      exit(1);
+      usage();
     }
   }
-  raytrace(nsamples);
+
+  if (fp == NULL) {
+    usage();
+  }
+
+  raytrace(iwrite, fp, nsamples);
+
+  if (fp != stdout && 0 != fclose(fp)) {
+    perror("could not close output file");
+    exit(1);
+  }
+
   return 0;
 }
 
@@ -297,13 +375,34 @@ static scene small_scene() {
   return (scene){.nspheres = i, .spheres = spheres};
 }
 
-static void ppm_write_stdout(uint8_t *buf, size_t size, size_t x, size_t y) {
-  printf("P6\n%zu %zu 255\n", x, y);
-  fflush(stdout);
-  write(STDOUT_FILENO, buf, size);
+static void
+ppm_write(FILE* fp, uint8_t* buf, size_t size, size_t w, size_t h) {
+  fprintf(fp, "P6\n%zu %zu 255\n", w, h);
+  fflush(fp);
+  fwrite(buf, size, 1, fp);
 }
 
-static void raytrace(size_t nsamples) {
+static void
+stb_write_fn(void* context, void* data, int size) {
+  fwrite(data, 1, size, (FILE*) context);
+}
+
+static void
+png_write(FILE* fp, uint8_t* buf, size_t size, size_t w, size_t h) {
+  int comp = 3; // components
+  int stride_in_bytes = comp*w;
+  assert(size == comp*w*h);
+  stbi_write_png_to_func(stb_write_fn, fp, w, h, comp, buf, stride_in_bytes);
+}
+
+static void
+jpg_write(FILE* fp, uint8_t* buf, size_t size, size_t w, size_t h) {
+  int comp = 3; // components
+  assert(size == comp*w*h);
+  stbi_write_jpg_to_func(stb_write_fn, fp, w, h, comp, buf, 90);
+}
+
+static void raytrace(image_write_fn iwrite, FILE* fp, size_t nsamples) {
   size_t nx = 600, ny = 300;
 
   //v3 lookfrom = {11,1.8,5};
@@ -326,13 +425,13 @@ static void raytrace(size_t nsamples) {
       v3 color = v3_zero;
       // anti-alias by averaging color around random nearby samples
       for (size_t s = 0; s < nsamples; s++) {
-        float x = (float)(i+drand48()) / (float)nx;
+        float x = (float)(i+0+drand48()) / (float)nx;
         float y = (float)(j-1+drand48()) / (float)ny;
         ray r = camera_ray_at_xy(&cam, x, y);
         color = v3_add(color, ray_color(&r, &sc));
       }
       color = v3_kdiv(color, (float)nsamples);
-      color = (v3){sqrt(color.x), sqrt(color.y), sqrt(color.z)};
+      color = v3_sqrt(color);
       buf[bi+0] = (255.0f * color.x);
       buf[bi+1] = (255.0f * color.y);
       buf[bi+2] = (255.0f * color.z);
@@ -341,6 +440,6 @@ static void raytrace(size_t nsamples) {
   }
 
   free(sc.spheres);
-  ppm_write_stdout(buf, sizeof buf, nx, ny);
-  //stbi_write_jpg_to_func(stbi__stdio_write, stdout, nx, ny, 3, buf, 90);
+
+  iwrite(fp, buf, sizeof buf, nx, ny);
 }

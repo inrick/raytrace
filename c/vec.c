@@ -29,6 +29,10 @@ static v3 v3_kdiv(v3 u, float k) {
   return (v3){u.x/k, u.y/k, u.z/k};
 }
 
+static v3 v3_sqrt(v3 u) {
+  return (v3){sqrt(u.x), sqrt(u.y), sqrt(u.z)};
+}
+
 // L2 norm
 static float v3_norm(v3 u) {
   return sqrtf(u.x*u.x + u.y*u.y + u.z*u.z);

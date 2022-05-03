@@ -19,7 +19,7 @@ BIN := ray
 # make bin phony to always rebuild
 .PHONY: all clean $(BIN) asm
 all: $(BIN)
-	time ./$(BIN) > test.ppm
+	time ./$(BIN) -o out.png
 
 $(BIN):
 	clang $(CFLAGS) -o $(BIN) main.c -lm
