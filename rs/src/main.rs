@@ -1,9 +1,4 @@
-use std::{
-	ffi::OsStr,
-	fs::File,
-	io::Write,
-	path::{Path, PathBuf},
-};
+use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
 use clap::Parser;
 
@@ -25,6 +20,10 @@ struct Args {
 	/// Number of random samples per ray
 	#[clap(short, long, default_value_t = 10)]
 	nsamples: u32,
+
+	/// Number of threads to run on
+	#[clap(short, long, default_value_t = 4)]
+	threads: u32,
 }
 
 type Error = Box<dyn std::error::Error>;
@@ -82,16 +81,17 @@ fn run(args: Args) -> Result {
 		}
 	};
 
-	raytrace(image_writer, &args.output, args.nsamples, 600, 300)
+	raytrace(image_writer, &args, 600, 300)
 }
 
-fn raytrace(
-	writer: ImageWriter,
-	filename: &Path,
-	nsamples: u32,
-	nx: u32,
-	ny: u32,
-) -> Result {
+fn raytrace(writer: ImageWriter, args: &Args, nx: u32, ny: u32) -> Result {
+	let filename = &args.output;
+	let nsamples = args.nsamples;
+	let threads = args.threads;
+	if threads == 0 {
+		return Err("number of threads must be positive".into());
+	}
+
 	let look_from = vec(10., 2.5, 5.);
 	let look_at = vec(-4., 0., -2.);
 	let dist_to_focus = (look_from - look_at).norm();
@@ -112,13 +112,65 @@ fn raytrace(
 	let sc = small_scene();
 
 	let mut buf = vec![0; (3 * nx * ny) as usize];
+	crossbeam_utils::thread::scope(|s| {
+		let mut ny_pos: u32 = 0;
+		let mut bufpos: usize = 0;
+		for i in 0..threads {
+			let ny_remaining = ny - ny_pos;
+			let ny_th = ny_remaining / (threads - i);
+			let len_th = 3 * nx * ny_th;
+			let ymax = (ny_remaining) as f32 / ny as f32;
+			let ymin = (ny_remaining - ny_th) as f32 / ny as f32;
+			let (cam, sc) = (&cam, &sc);
+			// Couldn't find a way to do different sized chunks with buf.chunks_mut
+			// so did the split manually instead.
+			let bufchunk = unsafe {
+				&mut *std::ptr::slice_from_raw_parts_mut(
+					buf.as_mut_ptr().add(bufpos),
+					len_th as usize,
+				)
+			};
+			s.spawn(move |_| {
+				render(
+					bufchunk,
+					cam,
+					sc,
+					nsamples,
+					nx,
+					ny_th as u32,
+					(ymin, ymax),
+				);
+			});
+			ny_pos += ny_th;
+			bufpos += len_th as usize;
+		}
+	})
+	.unwrap();
+
+	let mut f = File::create(filename)?;
+	writer(&mut f, &buf, nx, ny)?;
+	Ok(())
+}
+
+#[allow(clippy::identity_op)]
+fn render(
+	buf: &mut [u8],
+	cam: &Camera,
+	sc: &Scene,
+	nsamples: u32,
+	nx: u32,
+	ny: u32,
+	(ymin, ymax): (f32, f32),
+) {
+	assert_eq!(buf.len(), (3 * nx * ny) as usize);
+	let yheight = ymax - ymin;
 	let mut bi = 0;
 	for j in (0..ny).rev() {
 		for i in 0..nx {
 			let mut color = Vec3::default();
 			for _ in 0..nsamples {
-				let x = (i as f32 + rand32()) / nxf;
-				let y = (j as f32 + rand32()) / nyf;
+				let x = (i as f32 + rand32()) / nx as f32;
+				let y = ymin + yheight * (j as f32 + rand32()) / ny as f32;
 				let r = cam.ray_at(x, y);
 				color = color + sc.color(&r);
 			}
@@ -129,10 +181,6 @@ fn raytrace(
 			bi += 3;
 		}
 	}
-
-	let mut f = File::create(filename)?;
-	writer(&mut f, &buf, nx, ny)?;
-	Ok(())
 }
 
 fn ppm_write(f: &mut File, buf: &[u8], x: u32, y: u32) -> Result {
