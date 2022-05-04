@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <float.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,41 +15,53 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "lib/stb_image_write.h"
 
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+
 typedef void image_write_fn(FILE*, uint8_t*, size_t, size_t, size_t);
 
 static image_write_fn ppm_write;
 static image_write_fn png_write;
 static image_write_fn jpg_write;
 
-static void raytrace(image_write_fn, FILE*, size_t);
+typedef struct options options;
+static void raytrace(image_write_fn, FILE*, options*);
 
 static char* argv0;
 
 void usage(void) {
   fprintf(
     stderr,
-    "Usage: %s [-n <number of samples>] [-o <output file>.<ppm/png/jpg>]\n"
+    "Usage: %s [-n <number of samples>] [-t <number of threads>] [-o <output file>.<ppm/png/jpg>]\n"
     "\n"
     "If <output file> is '-' then a ppm image is written on stdout.\n"
     "\n"
     "Examples:\n"
     "\n",
     argv0);
-  fprintf(stderr, "	%s -n 100 -o out.jpg\n", argv0);
+  fprintf(stderr, "	%s -n 100 -t 4 -o out.jpg\n", argv0);
   fprintf(stderr, "	%s -o out.ppm\n", argv0);
   fprintf(stderr, "	%s -o - > out.ppm\n", argv0);
   exit(1);
 }
 
+struct options {
+  size_t nsamples;
+  size_t threads;
+};
+
 int main(int argc, char** argv) {
   argv0 = argv[0];
 
   int opt;
-  size_t nsamples = 10;
   FILE* fp = NULL;
   image_write_fn* iwrite = ppm_write;
 
-  while ((opt = getopt(argc, argv, "o:n:")) != -1) {
+  options opts = {
+    .nsamples = 10,
+    .threads = 4,
+  };
+
+  while ((opt = getopt(argc, argv, "o:n:t:")) != -1) {
     switch (opt) {
     case 'o': {
       if (strcmp(optarg, "-") == 0) {
@@ -90,7 +103,19 @@ int main(int argc, char** argv) {
           optarg);
         usage();
       }
-      nsamples = (size_t) n;
+      opts.nsamples = (size_t) n;
+    } break;
+    case 't': {
+      char* endptr = NULL;
+      long n = strtol(optarg, &endptr, 10);
+      if (n <= 0 || strcmp("", endptr) != 0) {
+        fprintf(
+          stderr,
+          "invalid number of threads (%s), must be a positive integer\n",
+          optarg);
+        usage();
+      }
+      opts.threads = (size_t) n;
     } break;
     default:
       usage();
@@ -101,7 +126,7 @@ int main(int argc, char** argv) {
     usage();
   }
 
-  raytrace(iwrite, fp, nsamples);
+  raytrace(iwrite, fp, &opts);
 
   if (fp != stdout && 0 != fclose(fp)) {
     perror("could not close output file");
@@ -402,7 +427,52 @@ jpg_write(FILE* fp, uint8_t* buf, size_t size, size_t w, size_t h) {
   stbi_write_jpg_to_func(stb_write_fn, fp, w, h, comp, buf, 90);
 }
 
-static void raytrace(image_write_fn iwrite, FILE* fp, size_t nsamples) {
+typedef struct {
+  uint8_t* buf;
+  size_t len;
+  camera* cam;
+  scene* sc;
+  size_t nsamples, nx, ny;
+  float ymin, ymax;
+} render_arg;
+
+static void* render(void* arg0) {
+  render_arg* arg = (render_arg*) arg0;
+
+  uint8_t* buf = arg->buf;
+  camera* cam = arg->cam;
+  scene* sc = arg->sc;
+  size_t nsamples = arg->nsamples;
+  size_t nx = arg->nx, ny = arg->ny;
+  float ymin = arg->ymin, ymax = arg->ymax;
+
+  assert(arg->len == 3*nx*ny);
+
+  float yheight = ymax - ymin;
+  size_t bi = 0;
+  for (size_t j = ny; j > 0; j--) {
+    for (size_t i = 0; i < nx; i++) {
+      v3 color = v3_zero;
+      // anti-alias by averaging color around random nearby samples
+      for (size_t s = 0; s < nsamples; s++) {
+        float x = (float)(i+0+drand48()) / (float)nx;
+        float y = ymin + yheight*(float)(j-1+drand48()) / (float)ny;
+        ray r = camera_ray_at_xy(cam, x, y);
+        color = v3_add(color, ray_color(&r, sc));
+      }
+      color = v3_kdiv(color, (float)nsamples);
+      color = v3_sqrt(color);
+      buf[bi+0] = (255.0f * color.x);
+      buf[bi+1] = (255.0f * color.y);
+      buf[bi+2] = (255.0f * color.z);
+      bi += 3;
+    }
+  }
+
+  return (void*)0;
+}
+
+static void raytrace(image_write_fn iwrite, FILE* fp, options* opts) {
   size_t nx = 600, ny = 300;
 
   //v3 lookfrom = {11,1.8,5};
@@ -418,25 +488,47 @@ static void raytrace(image_write_fn iwrite, FILE* fp, size_t nsamples) {
 
   scene sc = small_scene();
 
-  uint8_t buf[nx*ny*3];
-  size_t bi = 0;
-  for (size_t j = ny; j > 0; j--) {
-    for (size_t i = 0; i < nx; i++) {
-      v3 color = v3_zero;
-      // anti-alias by averaging color around random nearby samples
-      for (size_t s = 0; s < nsamples; s++) {
-        float x = (float)(i+0+drand48()) / (float)nx;
-        float y = (float)(j-1+drand48()) / (float)ny;
-        ray r = camera_ray_at_xy(&cam, x, y);
-        color = v3_add(color, ray_color(&r, &sc));
-      }
-      color = v3_kdiv(color, (float)nsamples);
-      color = v3_sqrt(color);
-      buf[bi+0] = (255.0f * color.x);
-      buf[bi+1] = (255.0f * color.y);
-      buf[bi+2] = (255.0f * color.z);
-      bi += 3;
+  size_t buflen = 3*nx*ny;
+  uint8_t buf[buflen];
+  size_t bufpos = 0;
+  size_t ny_pos = 0;
+  size_t threads = opts->threads;
+  render_arg args[threads];
+  for (size_t i = 0; i < threads; i++) {
+    size_t ny_remaining = ny-ny_pos;
+    size_t ny_th = ny_remaining/(threads - i);
+    size_t len_th = 3*nx*ny_th;
+    float ymax = (float)(ny_remaining)/(float)ny;
+    float ymin = (float)(ny_remaining-ny_th)/(float)ny;
+    args[i] = (render_arg){
+      .buf = &buf[bufpos],
+      .len = len_th,
+      .cam = &cam,
+      .sc = &sc,
+      .nsamples = opts->nsamples,
+      .nx = nx,
+      .ny = ny_th,
+      .ymin = ymin,
+      .ymax = ymax,
+    };
+    ny_pos += ny_th;
+    bufpos += len_th;
+  }
+
+  pthread_t thread_ids[threads];
+  for (size_t i = 0; i < threads; i++) {
+    pthread_t thread_id;
+    if (0 != pthread_create(&thread_id, NULL, &render, (void*)&args[i])) {
+      perror("pthread_create error");
+      exit(1);
     }
+    thread_ids[i] = thread_id;
+  }
+
+  for (size_t i = 0; i < threads; i++) {
+    void* retval;
+    pthread_join(thread_ids[i], &retval);
+    assert((intptr_t)retval == 0);
   }
 
   free(sc.spheres);
