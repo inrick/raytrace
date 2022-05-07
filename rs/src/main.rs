@@ -1,6 +1,6 @@
 use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
-use clap::Parser;
+use getopts::Options;
 
 mod vec;
 use vec::*;
@@ -11,35 +11,85 @@ fn rand32() -> f32 {
 
 static PI: f32 = std::f32::consts::PI;
 
-#[derive(Parser, Debug)]
 struct Args {
-	/// Output filename (supports .ppm/.png/.jpg)
-	#[clap(short, long, default_value = "out.png")]
 	output: PathBuf,
-
-	/// Number of random samples per ray
-	#[clap(short, long, default_value_t = 10)]
 	nsamples: u32,
-
-	/// Number of threads to run on
-	#[clap(short, long, default_value_t = 4)]
 	threads: u32,
 }
 
 type Error = Box<dyn std::error::Error>;
-type Result = ::std::result::Result<(), Error>;
+type Result<T> = ::std::result::Result<T, Error>;
 
-type ImageWriter = fn(&mut File, &[u8], u32, u32) -> Result;
+type ImageWriter = fn(&mut File, &[u8], u32, u32) -> Result<()>;
 
 fn main() {
-	let args = Args::parse();
-	if let Err(err) = run(args) {
+	if let Err(err) = run() {
 		eprintln!("ERROR: {}", err);
 		std::process::exit(1);
 	}
 }
 
-fn run(args: Args) -> Result {
+fn print_usage(opts: &Options, program: &str, exit_code: i32) -> ! {
+	let usage = format!("Usage:\n    {} [OPTIONS]", program);
+	println!("{}", opts.usage(&usage));
+	std::process::exit(exit_code);
+}
+
+fn run() -> Result<()> {
+	let mut opts = Options::new();
+	opts.optflag("h", "help", "show help");
+	opts.optopt(
+		"o",
+		"output",
+		"output file name (supports .ppm/.png/.jpg) [default: \"out.png\"]",
+		"NAME",
+	);
+	opts.optopt(
+		"n",
+		"nsamples",
+		"number of samples per ray [default: 10]",
+		"SAMPLES",
+	);
+	opts.optopt(
+		"t",
+		"threads",
+		"number of threads to run on [default: 8]",
+		"THREADS",
+	);
+
+	let program_args: Vec<String> = std::env::args().collect();
+	let program = program_args[0].clone();
+	let parsed = opts.parse(&program_args[1..])?;
+	if parsed.opt_present("h") {
+		print_usage(&opts, &program, 0);
+	}
+
+	let output = PathBuf::from(
+		parsed.opt_str("o").unwrap_or_else(|| "out.png".to_owned()),
+	);
+	let nsamples: u32 = parsed
+		.opt_str("n")
+		.unwrap_or_else(|| "10".to_owned())
+		.parse()
+		.map_err(|_| "number of samples must be a positive number")?;
+	if nsamples == 0 {
+		return Err("number of samples must be a positive number".into());
+	}
+	let threads: u32 = parsed
+		.opt_str("t")
+		.unwrap_or_else(|| "8".to_owned())
+		.parse()
+		.map_err(|_| "number of threads must be a positive number")?;
+	if threads == 0 {
+		return Err("number of threads must be a positive number".into());
+	}
+
+	let args = Args {
+		output,
+		nsamples,
+		threads,
+	};
+
 	// Decide image output format by the given file extension
 	let extension = args
 		.output
@@ -84,7 +134,7 @@ fn run(args: Args) -> Result {
 	raytrace(image_writer, &args, 600, 300)
 }
 
-fn raytrace(writer: ImageWriter, args: &Args, nx: u32, ny: u32) -> Result {
+fn raytrace(writer: ImageWriter, args: &Args, nx: u32, ny: u32) -> Result<()> {
 	let filename = &args.output;
 	let nsamples = args.nsamples;
 	let threads = args.threads;
@@ -183,7 +233,7 @@ fn render(
 	}
 }
 
-fn ppm_write(f: &mut File, buf: &[u8], x: u32, y: u32) -> Result {
+fn ppm_write(f: &mut File, buf: &[u8], x: u32, y: u32) -> Result<()> {
 	f.write_all(format!("P6\n{} {} 255\n", x, y).as_bytes())?;
 	f.write_all(buf)?;
 	Ok(())
