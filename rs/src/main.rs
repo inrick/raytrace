@@ -21,6 +21,6 @@ fn main() {
 	eframe::run_native(
 		"Raytracer",
 		options,
-		Box::new(|_cc| Box::new(gui::App::default())),
+		Box::new(|cc| Box::new(gui::App::new(cc))),
 	);
 }

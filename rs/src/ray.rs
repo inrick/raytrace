@@ -5,6 +5,8 @@ use crate::vec::*;
 pub struct Args {
 	pub nsamples: u32,
 	pub threads: u32,
+	pub cam: Camera,
+	pub scene: Scene,
 }
 
 pub struct Image {
@@ -76,25 +78,6 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 		panic!("number of samples and threads must be positive");
 	}
 
-	let look_from = vec(10., 2.5, 5.);
-	let look_at = vec(-4., 0., -2.);
-	let dist_to_focus = (look_from - look_at).norm();
-	let aperture = 0.05;
-
-	let (nxf, nyf) = (nx as f32, ny as f32);
-
-	let cam = Camera::new(
-		look_from,
-		look_at,
-		vec(0., 1., 0.),
-		20.,
-		nxf / nyf,
-		aperture,
-		dist_to_focus,
-	);
-
-	let sc = small_scene();
-
 	let mut buf = vec![0; (3 * nx * ny) as usize];
 	crossbeam_utils::thread::scope(|s| {
 		let mut ny_pos: u32 = 0;
@@ -105,7 +88,7 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 			let len_th = 3 * nx * ny_th;
 			let ymax = (ny_remaining) as f32 / ny as f32;
 			let ymin = (ny_remaining - ny_th) as f32 / ny as f32;
-			let (cam, sc) = (&cam, &sc);
+			let (cam, sc) = (&args.cam, &args.scene);
 			// Couldn't find a way to do different sized chunks with buf.chunks_mut
 			// so did the split manually instead.
 			let bufchunk = unsafe {
@@ -202,6 +185,7 @@ impl Default for HitRecord {
 	}
 }
 
+#[derive(Clone)]
 struct Sphere {
 	center: Vec3,
 	radius: f32,
@@ -231,7 +215,8 @@ impl Sphere {
 	}
 }
 
-struct Scene {
+#[derive(Clone)]
+pub struct Scene {
 	spheres: Vec<Sphere>,
 }
 
@@ -273,7 +258,8 @@ impl Scene {
 }
 
 #[allow(dead_code)]
-struct Camera {
+#[derive(Clone)]
+pub struct Camera {
 	lower_left_corner: Vec3,
 	horiz: Vec3,
 	vert: Vec3,
@@ -285,7 +271,7 @@ struct Camera {
 }
 
 impl Camera {
-	fn new(
+	pub fn new(
 		look_from: Vec3,
 		look_at: Vec3,
 		v_up: Vec3,
@@ -401,7 +387,27 @@ fn scatter(r: &Ray, p: Vec3, normal: Vec3, mat: Material) -> (Vec3, Ray) {
 	}
 }
 
-fn small_scene() -> Scene {
+#[cfg(not(feature = "gui"))]
+pub fn camera_default(nx: u32, ny: u32) -> Camera {
+	let look_from = vec(10., 2.5, 5.);
+	let look_at = vec(-4., 0., -2.);
+	let dist_to_focus = (look_from - look_at).norm();
+	let aperture = 0.05;
+
+	let (nxf, nyf) = (nx as f32, ny as f32);
+
+	Camera::new(
+		look_from,
+		look_at,
+		vec(0., 1., 0.),
+		20.,
+		nxf / nyf,
+		aperture,
+		dist_to_focus,
+	)
+}
+
+pub fn small_scene() -> Scene {
 	let nspheres = 3 + 360 / 15;
 	let mut spheres = Vec::with_capacity(nspheres);
 

@@ -1,6 +1,6 @@
 use getopts::Options;
 
-use crate::ray::{raytrace, save_file, Args};
+use crate::ray::{camera_default, raytrace, save_file, small_scene, Args};
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = ::std::result::Result<T, Error>;
@@ -58,8 +58,16 @@ pub fn run() -> Result<()> {
 		return Err("number of threads must be a positive number".into());
 	}
 
-	let args = Args { nsamples, threads };
+	let (nx, ny) = (600, 300);
+	let cam = camera_default(nx, ny);
+	let scene = small_scene();
+	let args = Args {
+		nsamples,
+		threads,
+		cam,
+		scene,
+	};
 
-	let img = raytrace(&args, 600, 300);
+	let img = raytrace(&args, nx, ny);
 	save_file(&img, &output)
 }
