@@ -1,35 +1,31 @@
-CFLAGS_DEBUG := \
-  -march=native \
-  -g3 -O0 \
-  -std=gnu99 \
-  -Wall \
-  -Wextra \
-  -Wswitch-enum \
-  -fno-strict-aliasing
 CFLAGS := \
   -march=native \
-  -O3 \
-  -std=gnu99 \
+  -std=gnu11 \
   -Wall \
   -Wextra \
   -Wswitch-enum \
-  -fno-strict-aliasing
+  -fno-strict-aliasing \
+  -fwrapv
+CFLAGS_DEBUG   := -O0 -g3 $(CFLAGS)
+CFLAGS_RELEASE := -O2 $(CFLAGS)
 LDFLAGS := -lm -lpthread
 BIN := ray
 
 # make bin phony to always rebuild
-.PHONY: all clean $(BIN) debug asm
+.PHONY: all clean $(BIN) debug asm run
 all: $(BIN)
-	time ./$(BIN) -o out.png
 
 $(BIN):
-	clang $(CFLAGS) -o $(BIN) main.c $(LDFLAGS)
+	clang $(CFLAGS_RELEASE) -o $(BIN) main.c $(LDFLAGS)
 
 debug:
 	clang $(CFLAGS_DEBUG) -o $(BIN) main.c $(LDFLAGS)
 
 asm:
-	clang -S $(CFLAGS) -o main.s main.c
+	clang -S -masm=intel $(CFLAGS_RELEASE) -o main.s main.c
+
+run: $(BIN)
+	time ./$(BIN) -oout.png -n100 -t8
 
 clean:
 	-rm -f $(BIN) main.s

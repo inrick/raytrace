@@ -6,9 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdlib.h> // drand48 seems to require gnu extension
+#include <stdlib.h>
 #include <unistd.h>
 
+#include "rand.c"
 #include "vec.c"
 #include "structs.c"
 
@@ -194,7 +195,7 @@ static bool scatter(
     v3 refracted;
     ray r;
     if (refract(r_in->B, outward_normal, ni_over_nt, &refracted)
-        && drand48() >= schlick(cosine, ref_idx)) {
+        && my_rand() >= schlick(cosine, ref_idx)) {
       r = (ray){.A = rec->p, .B = refracted};
     } else {
       r = (ray){.A = rec->p, .B = v3_reflect(r_in->B, rec->normal)};
@@ -294,14 +295,14 @@ static scene random_scene() {
   size_t i = 1;
   for (int a = -11; a < 11; a++) {
     for (int b = -11; b < 11; b++) {
-      float choose_mat = drand48();
-      v3 center = (v3){a+0.9*drand48(), 0.2, b+0.9*drand48()};
+      float choose_mat = my_rand();
+      v3 center = (v3){a+0.9*my_rand(), 0.2, b+0.9*my_rand()};
       if (choose_mat < 0.8) { // matte
         spheres[i++] = (sphere){
           .center = center,
           .radius = 0.2,
           .mat = {.type = MATTE, .matte.albedo = {
-            drand48()*drand48(), drand48()*drand48(), drand48()*drand48()
+            my_rand()*my_rand(), my_rand()*my_rand(), my_rand()*my_rand()
           }},
         };
       } else if (choose_mat < 0.95) { // metal
@@ -310,9 +311,9 @@ static scene random_scene() {
           .radius = 0.2,
           .mat = {.type = METAL, .metal = {
             .albedo = {
-              0.5*(1+drand48()), 0.5*(1+drand48()), 0.5*(1+drand48())
+              0.5*(1+my_rand()), 0.5*(1+my_rand()), 0.5*(1+my_rand())
             },
-            .fuzz = 0.5*drand48(),
+            .fuzz = 0.5*my_rand(),
           }},
         };
       } else { // dielectric
@@ -455,8 +456,8 @@ static void* render(void* arg0) {
       v3 color = v3_zero;
       // anti-alias by averaging color around random nearby samples
       for (size_t s = 0; s < nsamples; s++) {
-        float x = (float)(i+0+drand48()) / (float)nx;
-        float y = ymin + yheight*(float)(j-1+drand48()) / (float)ny;
+        float x = (float)(i+0+my_rand()) / (float)nx;
+        float y = ymin + yheight*(float)(j-1+my_rand()) / (float)ny;
         ray r = camera_ray_at_xy(cam, x, y);
         color = v3_add(color, ray_color(&r, sc));
       }

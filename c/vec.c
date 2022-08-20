@@ -65,7 +65,7 @@ static v3 random_in_unit_ball() {
   v3 u;
   float norm = 0;
   while (norm >= 1.0 || fabsf(norm) < FLT_EPSILON) {
-    u = v3_sub(v3_kmul(2, (v3){drand48(), drand48(), drand48()}), v3_one);
+    u = v3_sub(v3_kmul(2, (v3){my_rand(), my_rand(), my_rand()}), v3_one);
     norm = v3_norm(u);
   }
   return u;
