@@ -463,6 +463,9 @@ static void* render(void* arg0) {
       }
       color = v3_kdiv(color, (float)nsamples);
       color = v3_sqrt(color);
+      if (isnanf(color.x)) color.x = 0;
+      if (isnanf(color.y)) color.y = 0;
+      if (isnanf(color.z)) color.z = 0;
       buf[bi+0] = (255.0f * color.x);
       buf[bi+1] = (255.0f * color.y);
       buf[bi+2] = (255.0f * color.z);
