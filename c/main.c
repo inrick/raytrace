@@ -363,9 +363,15 @@ static scene trivial_scene() {
 }
 */
 
-static scene small_scene() {
-  size_t nspheres = 3+360/15;
-  sphere *spheres = calloc(nspheres, sizeof(*spheres));
+// Call with NULL to get the number of spheres needed for the scene. Then
+// allocate a buffer with room for the scene, create a scene object and call
+// the function again.
+static size_t small_scene(scene* sc) {
+  if (sc == NULL) {
+    return 3+360/15;
+  }
+  size_t nspheres = sc->nspheres;
+  sphere* spheres = sc->spheres;
   assert(spheres);
 
   spheres[0] = (sphere){
@@ -398,7 +404,7 @@ static scene small_scene() {
   }
 
   assert(nspheres >= i); // in case calculation is off
-  return (scene){.nspheres = i, .spheres = spheres};
+  return i;
 }
 
 static void
@@ -490,7 +496,10 @@ static void raytrace(image_write_fn iwrite, FILE* fp, options* opts) {
     (float)nx / (float)ny, aperture, dist_to_focus
   );
 
-  scene sc = small_scene();
+  size_t nspheres = small_scene(NULL);
+  sphere spheres[nspheres];
+  scene sc = (scene){.spheres = spheres, .nspheres = nspheres};
+  assert(nspheres == small_scene(&sc));
 
   size_t buflen = 3*nx*ny;
   uint8_t buf[buflen];
@@ -534,8 +543,6 @@ static void raytrace(image_write_fn iwrite, FILE* fp, options* opts) {
     pthread_join(thread_ids[i], &retval);
     assert((intptr_t)retval == 0);
   }
-
-  free(sc.spheres);
 
   iwrite(fp, buf, sizeof buf, nx, ny);
 }
