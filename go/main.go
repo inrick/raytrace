@@ -25,10 +25,9 @@ type float = m.Float
 func main() {
 	log.SetFlags(0)
 
-	var nsamples, x, y, threads int
+	var nsamples, x, y int
 	var cpuprof, outputFile string
 	flag.IntVar(&nsamples, "n", 10, "number of samples")
-	flag.IntVar(&threads, "t", 4, "number of threads")
 	flag.IntVar(&x, "x", 600, "picture width")
 	flag.IntVar(&y, "y", 300, "picture height")
 	flag.StringVar(&cpuprof, "cpuprof", "", "file to dump cpu profile")
@@ -37,9 +36,6 @@ func main() {
 
 	if nsamples <= 0 {
 		log.Fatalf("number of samples has to be positive")
-	}
-	if threads <= 0 {
-		log.Fatalf("number of threads has to be positive")
 	}
 
 	if cpuprof != "" {
@@ -80,7 +76,7 @@ func main() {
 	}
 
 	t0 := time.Now()
-	err := Run(write, w, threads, nsamples, x, y)
+	err := Run(write, w, nsamples, x, y)
 	t1 := time.Now().Sub(t0)
 
 	if err != nil {
@@ -92,7 +88,7 @@ func main() {
 
 type ImageWriter func(io.Writer, []byte, int, int) error
 
-func Run(write ImageWriter, w io.Writer, threads, nsamples, nx, ny int) error {
+func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
 	distToFocus := Norm(Sub(lookFrom, lookAt))
@@ -109,23 +105,19 @@ func Run(write ImageWriter, w io.Writer, threads, nsamples, nx, ny int) error {
 
 	buf := make([]byte, 3*nx*ny)
 
-	nypos := 0
 	bufpos := 0
+	rowlen := 3 * nx
 	var wg sync.WaitGroup
-	wg.Add(threads)
-	for i := 0; i < threads; i++ {
-		nyRemaining := ny - nypos
-		nyThread := nyRemaining / (threads - i)
-		lenThread := 3 * nx * nyThread
-		ymax := float(nyRemaining) / nyf
-		ymin := float(nyRemaining-nyThread) / nyf
-		bufchunk := buf[bufpos : bufpos+lenThread]
+	wg.Add(ny)
+	for i := 0; i < ny; i++ {
+		ymax := float(ny-i-0) / nyf
+		ymin := float(ny-i-1) / nyf
+		bufchunk := buf[bufpos : bufpos+rowlen]
 		go func() {
-			Render(bufchunk, cam, sc, nsamples, nx, nyThread, ymin, ymax)
+			Render(bufchunk, cam, sc, nsamples, nx, 1, ymin, ymax)
 			wg.Done()
 		}()
-		bufpos += lenThread
-		nypos += nyThread
+		bufpos += rowlen
 	}
 	wg.Wait()
 

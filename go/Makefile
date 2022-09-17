@@ -2,10 +2,10 @@
 all: math32
 
 math32:
-	go build && time ./ray -o out.png -t 4
+	go build && time ./ray -o out.png
 
 math64:
-	go build -tags math64 && time ./ray -o out.png -t 4
+	go build -tags math64 && time ./ray -o out.png
 
 # tinygo produces a significantly faster executable for single threaded runs
 # but forces GOMAXPROCS=1
