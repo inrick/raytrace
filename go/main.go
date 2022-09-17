@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"time"
 
 	"ray/m"
@@ -22,14 +23,24 @@ import (
 type float = m.Float
 
 func main() {
-	var nsamples, x, y int
+	log.SetFlags(0)
+
+	var nsamples, x, y, threads int
 	var cpuprof, outputFile string
 	flag.IntVar(&nsamples, "n", 10, "number of samples")
+	flag.IntVar(&threads, "t", 4, "number of threads")
 	flag.IntVar(&x, "x", 600, "picture width")
 	flag.IntVar(&y, "y", 300, "picture height")
 	flag.StringVar(&cpuprof, "cpuprof", "", "file to dump cpu profile")
-	flag.StringVar(&outputFile, "o", "-", "output file")
+	flag.StringVar(&outputFile, "o", "out.png", "output file")
 	flag.Parse()
+
+	if nsamples <= 0 {
+		log.Fatalf("number of samples has to be positive")
+	}
+	if threads <= 0 {
+		log.Fatalf("number of threads has to be positive")
+	}
 
 	if cpuprof != "" {
 		f, err := os.Create(cpuprof)
@@ -69,19 +80,19 @@ func main() {
 	}
 
 	t0 := time.Now()
-	err := Run(write, w, nsamples, x, y)
+	err := Run(write, w, threads, nsamples, x, y)
 	t1 := time.Now().Sub(t0)
 
 	if err != nil {
 		log.Fatalf("ERROR: %v", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "raytracing took %.3f seconds\n", t1.Seconds())
+	log.Printf("raytracing took %.3f seconds\n", t1.Seconds())
 }
 
 type ImageWriter func(io.Writer, []byte, int, int) error
 
-func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
+func Run(write ImageWriter, w io.Writer, threads, nsamples, nx, ny int) error {
 	lookFrom := Vec{10, 2.5, 5}
 	lookAt := Vec{-4, 0, -2}
 	distToFocus := Norm(Sub(lookFrom, lookAt))
@@ -96,14 +107,40 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 
 	sc := SmallScene()
 
-	buf := make([]byte, nx*ny*3)
+	buf := make([]byte, 3*nx*ny)
+
+	nypos := 0
+	bufpos := 0
+	var wg sync.WaitGroup
+	wg.Add(threads)
+	for i := 0; i < threads; i++ {
+		nyRemaining := ny - nypos
+		nyThread := nyRemaining / (threads - i)
+		lenThread := 3 * nx * nyThread
+		ymax := float(nyRemaining) / nyf
+		ymin := float(nyRemaining-nyThread) / nyf
+		bufchunk := buf[bufpos : bufpos+lenThread]
+		go func() {
+			Render(bufchunk, cam, sc, nsamples, nx, nyThread, ymin, ymax)
+			wg.Done()
+		}()
+		bufpos += lenThread
+		nypos += nyThread
+	}
+	wg.Wait()
+
+	return write(w, buf, nx, ny)
+}
+
+func Render(buf []byte, cam Camera, sc Scene, nsamples, nx, ny int, ymin, ymax float) {
+	yheight := ymax - ymin
 	bi := 0
 	for j := ny; j > 0; j-- {
 		for i := 0; i < nx; i++ {
 			var color Vec
 			for s := 0; s < nsamples; s++ {
-				x := (float(i+0) + m.Rand()) / nxf
-				y := (float(j-1) + m.Rand()) / nyf
+				x := (float(i) + m.Rand()) / float(nx)
+				y := ymin + (yheight*(float(j-1)+m.Rand()))/float(ny)
 				r := cam.RayAtXY(x, y)
 				color = Add(color, sc.Color(&r))
 			}
@@ -115,8 +152,6 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 			bi += 3
 		}
 	}
-
-	return write(w, buf, nx, ny)
 }
 
 type Ray struct {

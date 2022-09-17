@@ -4,7 +4,6 @@ package m // import "ray/m"
 
 import (
 	"math"
-	"math/rand"
 )
 
 // Exported name
@@ -18,10 +17,6 @@ var Epsilon float
 
 func init() {
 	Epsilon = math.Nextafter(1, 2) - 1
-}
-
-func Rand() float {
-	return rand.Float64()
 }
 
 func Abs(x float) float {
