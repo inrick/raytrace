@@ -43,6 +43,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not open cpuprof file %q: %v", cpuprof, err)
 		}
+		defer f.Close()
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
 	}
@@ -396,7 +397,7 @@ func WritePPM(w io.Writer, buf []byte, width, height int) error {
 	return err
 }
 
-func bufToImage(buf []byte, width, height int) image.Image {
+func bufToImageAlt(buf []byte, width, height int) image.Image {
 	img := image.NewNRGBA(image.Rect(0, 0, width, height))
 	for i := 0; i < len(buf); i += 3 {
 		x := i / 3 % width
@@ -404,6 +405,21 @@ func bufToImage(buf []byte, width, height int) image.Image {
 		img.Set(x, y, color.NRGBA{buf[i+0], buf[i+1], buf[i+2], 255})
 	}
 	return img
+}
+
+func bufToImage(buf []byte, width, height int) image.Image {
+	img := make([]byte, 4*width*height)
+	for i := 0; i < width*height; i++ {
+		img[4*i+0] = buf[3*i+0]
+		img[4*i+1] = buf[3*i+1]
+		img[4*i+2] = buf[3*i+2]
+		img[4*i+3] = 255
+	}
+	return &image.RGBA{
+		Pix:    img,
+		Stride: 4 * width,
+		Rect:   image.Rect(0, 0, width, height),
+	}
 }
 
 func WriteJPG(w io.Writer, buf []byte, width, height int) error {
