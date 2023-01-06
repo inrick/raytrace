@@ -79,7 +79,7 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 	}
 
 	let mut buf = vec![0; (3 * nx * ny) as usize];
-	crossbeam_utils::thread::scope(|s| {
+	std::thread::scope(|s| {
 		let mut ny_pos: u32 = 0;
 		let mut bufpos: usize = 0;
 		for i in 0..threads {
@@ -97,14 +97,13 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 					len_th as usize,
 				)
 			};
-			s.spawn(move |_| {
-				render(bufchunk, cam, sc, nsamples, nx, ny_th as u32, (ymin, ymax));
+			s.spawn(move || {
+				render(bufchunk, cam, sc, nsamples, nx, ny_th, (ymin, ymax));
 			});
 			ny_pos += ny_th;
 			bufpos += len_th as usize;
 		}
-	})
-	.unwrap();
+	});
 
 	Image { buf, nx, ny }
 }

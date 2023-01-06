@@ -17,7 +17,6 @@ default = ["dep:getopts"]
 gui = ["dep:eframe", "dep:chrono"]
 
 [dependencies]
-crossbeam-utils = "0.8.1"
 rand = "0.8.4"
 image = { version = "0.24.1", default-features = false, features = ["jpeg", "png"] }
 getopts = { version = "0.2.1", optional = true }
