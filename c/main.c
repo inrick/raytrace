@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
 
   int opt;
   FILE* fp = NULL;
-  image_write_fn* iwrite = ppm_write;
+  image_write_fn* img_write = ppm_write;
 
   options opts = {
     .nsamples = 10,
@@ -76,11 +76,11 @@ int main(int argc, char** argv) {
           "missing file name extension, support ppm/png/jpg\n");
         usage();
       } else if (strcasecmp(ext, ".png") == 0) {
-        iwrite = png_write;
+        img_write = png_write;
       } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
-        iwrite = jpg_write;
+        img_write = jpg_write;
       } else if (strcasecmp(ext, ".ppm") == 0) {
-        iwrite = ppm_write;
+        img_write = ppm_write;
       } else {
         fprintf(
           stderr,
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     usage();
   }
 
-  raytrace(iwrite, fp, &opts);
+  raytrace(img_write, fp, &opts);
 
   if (fp != stdout && 0 != fclose(fp)) {
     perror("could not close output file");
@@ -482,7 +482,7 @@ static void* render(void* arg0) {
   return (void*)0;
 }
 
-static void raytrace(image_write_fn iwrite, FILE* fp, options* opts) {
+static void raytrace(image_write_fn img_write, FILE* fp, options* opts) {
   size_t nx = 600, ny = 300;
 
   //v3 lookfrom = {11,1.8,5};
@@ -544,5 +544,5 @@ static void raytrace(image_write_fn iwrite, FILE* fp, options* opts) {
     assert((intptr_t)retval == 0);
   }
 
-  iwrite(fp, buf, sizeof buf, nx, ny);
+  img_write(fp, buf, sizeof buf, nx, ny);
 }
