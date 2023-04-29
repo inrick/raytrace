@@ -1,3 +1,6 @@
+#![allow(clippy::identity_op)]
+#![allow(clippy::uninlined_format_args)]
+
 mod ray;
 mod vec;
 
@@ -18,7 +21,7 @@ fn main() {
 #[cfg(feature = "gui")]
 fn main() {
 	let options = eframe::NativeOptions::default();
-	eframe::run_native(
+	let _ = eframe::run_native(
 		"Raytracer",
 		options,
 		Box::new(|cc| Box::new(gui::App::new(cc))),

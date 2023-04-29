@@ -94,7 +94,7 @@ impl From<&Image> for ColorImage {
 		let size = [img.nx as usize, img.ny as usize];
 		let mut cimg = ColorImage::new(size, Color32::BLACK);
 		for (i, pixel) in cimg.pixels.iter_mut().enumerate() {
-			let r = img.buf[3 * i];
+			let r = img.buf[3 * i + 0];
 			let g = img.buf[3 * i + 1];
 			let b = img.buf[3 * i + 2];
 			*pixel = Color32::from_rgb(r, g, b);
@@ -155,6 +155,7 @@ fn set_egui_style(ctx: &egui::Context) {
 	ctx.set_pixels_per_point(1.);
 	ctx.set_fonts(fonts);
 	ctx.set_style(style);
+  ctx.set_visuals(egui::style::Visuals::light());
 }
 
 impl App {
@@ -191,13 +192,13 @@ impl App {
 impl eframe::App for App {
 	fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
 		// Process keys
-		if ctx.input().key_pressed(Key::Enter) {
+		if ctx.input(|i| i.key_pressed(Key::Enter)) {
 			self.actions.set(ACTION_RENDER);
 		}
-		if ctx.input().modifiers.matches(Modifiers::CTRL) {
-			if ctx.input().key_pressed(Key::Num1) {
+		if ctx.input(|i| i.modifiers.matches(Modifiers::CTRL)) {
+			if ctx.input(|i| i.key_pressed(Key::Num1)) {
 				self.actions.set(ACTION_TOGGLE_SETTINGS_WINDOW);
-			} else if ctx.input().key_pressed(Key::Num2) {
+			} else if ctx.input(|i| i.key_pressed(Key::Num2)) {
 				self.actions.set(ACTION_TOGGLE_LOG_WINDOW);
 			}
 		}
@@ -228,7 +229,7 @@ impl eframe::App for App {
 			egui::menu::bar(ui, |ui| {
 				ui.menu_button("File", |ui| {
 					if ui.button("Quit").clicked() {
-						frame.quit();
+						frame.close();
 					}
 				});
 				ui.menu_button("Windows", |ui| {
@@ -255,7 +256,7 @@ impl eframe::App for App {
 				let cimg = ColorImage::from(&image);
 				self.result = Some(ImageResult {
 					image,
-					texture: ctx.load_texture("ray", cimg),
+					texture: ctx.load_texture("ray", cimg, Default::default()),
 				});
 				self.render_state = RenderState::Idle;
 			} else {
