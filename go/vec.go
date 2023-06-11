@@ -11,11 +11,11 @@ type Vec struct {
 	X, Y, Z float
 }
 
-func RandomInUnitBall() Vec {
+func RandomInUnitBall(rnd *m.RandState) Vec {
 	var u Vec
 	var norm float
 	for {
-		u = Vec{X: m.Rand(), Y: m.Rand(), Z: m.Rand()}
+		u = Vec{X: rnd.Rand(), Y: rnd.Rand(), Z: rnd.Rand()}
 		u = Kmul(2, u)
 		u = Sub(u, Ones)
 		norm = Norm(u)

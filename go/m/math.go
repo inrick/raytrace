@@ -9,14 +9,18 @@ func frandi(index uint32) uint32 {
 	return (index*(index*index*15731+789221) + 1376312589) & 0x7fffffff
 }
 
-// TODO: data race, though harmless
-var seed uint32 = 123456789
+// Go does not support thread locals so instead we use a separate state per
+// goroutine.
+type RandState uint32
 
-func Rand() Float {
-	result := frandi(seed)
-	// Offset next seed by 1 to avoid a fixed point. The final image still looks
-	// good. Without the offset it looks awful.
-	seed = result + 1
+func NewRand() *RandState {
+	s := RandState(123456789)
+	return &s
+}
+
+func (rnd *RandState) Rand() Float {
+	result := frandi(uint32(*rnd))
+	*rnd = RandState(result + 1)
 	return Float(result) / Float(0x7fff_ffff)
 }
 

@@ -115,7 +115,8 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 		ymin := float(ny-i-1) / nyf
 		bufchunk := buf[bufpos : bufpos+rowlen]
 		go func() {
-			Render(bufchunk, cam, sc, nsamples, nx, 1, ymin, ymax)
+			rnd := m.NewRand()
+			Render(rnd, bufchunk, cam, sc, nsamples, nx, 1, ymin, ymax)
 			wg.Done()
 		}()
 		bufpos += rowlen
@@ -125,17 +126,17 @@ func Run(write ImageWriter, w io.Writer, nsamples, nx, ny int) error {
 	return write(w, buf, nx, ny)
 }
 
-func Render(buf []byte, cam Camera, sc Scene, nsamples, nx, ny int, ymin, ymax float) {
+func Render(rnd *m.RandState, buf []byte, cam Camera, sc Scene, nsamples, nx, ny int, ymin, ymax float) {
 	yheight := ymax - ymin
 	bi := 0
 	for j := ny; j > 0; j-- {
 		for i := 0; i < nx; i++ {
 			var color Vec
 			for s := 0; s < nsamples; s++ {
-				x := (float(i) + m.Rand()) / float(nx)
-				y := ymin + (yheight*(float(j-1)+m.Rand()))/float(ny)
-				r := cam.RayAtXY(x, y)
-				color = Add(color, sc.Color(&r))
+				x := (float(i) + rnd.Rand()) / float(nx)
+				y := ymin + (yheight*(float(j-1)+rnd.Rand()))/float(ny)
+				r := cam.RayAtXY(rnd, x, y)
+				color = Add(color, sc.Color(rnd, &r))
 			}
 			color = Kdiv(color, float(nsamples))
 			color = Sqrt(color)
@@ -155,7 +156,7 @@ func (r *Ray) Eval(t float) Vec {
 	return Add(r.Origin, Kmul(t, r.Dir))
 }
 
-func (sc Scene) Color(r0 *Ray) Vec {
+func (sc Scene) Color(rnd *m.RandState, r0 *Ray) Vec {
 	var rec HitRecord
 	r := *r0
 	color := Ones // At infinity
@@ -166,7 +167,7 @@ func (sc Scene) Color(r0 *Ray) Vec {
 			color = Mul(color, Add(Kmul(t, Vec{.75, .95, 1.0}), Kmul(1-t, Ones)))
 			break
 		}
-		attenuation, scattered := Scatter(&r, rec.P, rec.Normal, rec.Mat)
+		attenuation, scattered := Scatter(rnd, &r, rec.P, rec.Normal, rec.Mat)
 		r = scattered
 		color = Mul(color, attenuation)
 	}
@@ -277,8 +278,8 @@ func CameraNew(
 	}
 }
 
-func (c *Camera) RayAtXY(x, y float) Ray {
-	rd := Kmul(c.LensRadius, RandomInUnitBall())
+func (c *Camera) RayAtXY(rnd *m.RandState, x, y float) Ray {
+	rd := Kmul(c.LensRadius, RandomInUnitBall(rnd))
 	offset := Add(Kmul(rd.X, c.U), Kmul(rd.Y, c.V))
 
 	dir := Add(Kmul(x, c.Horiz), Kmul(y, c.Vert))
@@ -306,17 +307,16 @@ func Refract(u, n Vec, niOverNt float, refracted *Vec) bool {
 	return false
 }
 
-func Scatter(r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
+func Scatter(rnd *m.RandState, r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
 	switch mat.Kind {
 	case KindMatte:
 		// p+normal+random
-		target := Add(Add(p, normal), RandomInUnitBall())
+		target := Add(Add(p, normal), RandomInUnitBall(rnd))
 		scattered := Ray{Origin: p, Dir: Sub(target, p)}
 		return mat.Albedo, scattered
-
 	case KindMetal:
 		reflected := Reflect(Normalize(r.Dir), normal)
-		dir := Add(reflected, Kmul(mat.F, RandomInUnitBall()))
+		dir := Add(reflected, Kmul(mat.F, RandomInUnitBall(rnd)))
 		var scattered Ray
 		if Dot(dir, normal) > 0 {
 			scattered.Origin = p
@@ -325,7 +325,6 @@ func Scatter(r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
 			scattered = *r
 		}
 		return mat.Albedo, scattered
-
 	case KindDielectric:
 		refIdx := mat.F
 		var outwardNormal Vec
@@ -342,12 +341,11 @@ func Scatter(r *Ray, p, normal Vec, mat Material) (Vec, Ray) {
 		}
 		var dir Vec
 		if !Refract(r.Dir, outwardNormal, niOverNt, &dir) ||
-			m.Rand() < Schlick(cosine, refIdx) {
+			rnd.Rand() < Schlick(cosine, refIdx) {
 			dir = Reflect(r.Dir, normal)
 		}
 		scattered := Ray{Origin: p, Dir: dir}
 		return Ones, scattered
-
 	default:
 		panic(nil)
 	}
