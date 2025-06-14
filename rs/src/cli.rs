@@ -1,4 +1,5 @@
 use getopts::Options;
+use std::time::Instant;
 
 use crate::ray::{camera_default, raytrace, save_file, small_scene, Args};
 
@@ -58,6 +59,8 @@ pub fn run() -> Result<()> {
 		return Err("number of threads must be a positive number".into());
 	}
 
+	let t0 = Instant::now();
+
 	let (nx, ny) = (600, 300);
 	let cam = camera_default(nx, ny);
 	let scene = small_scene();
@@ -69,5 +72,12 @@ pub fn run() -> Result<()> {
 	};
 
 	let img = raytrace(&args, nx, ny);
+
+	let t1 = Instant::now();
+	println!(
+		"rendering took {:.3} seconds",
+		t1.duration_since(t0).as_secs_f32()
+	);
+
 	save_file(&img, &output)
 }
