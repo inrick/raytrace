@@ -136,7 +136,7 @@ func Render(rnd *m.RandState, buf []byte, cam Camera, sc Scene, nsamples, nx, ny
 				x := (float(i) + rnd.Rand()) / float(nx)
 				y := ymin + (yheight*(float(j-1)+rnd.Rand()))/float(ny)
 				r := cam.RayAtXY(rnd, x, y)
-				color = Add(color, sc.Color(rnd, &r))
+				color = Add(color, sc.Color(rnd, r))
 			}
 			color = Kdiv(color, float(nsamples))
 			color = Sqrt(color)
@@ -156,9 +156,8 @@ func (r *Ray) Eval(t float) Vec {
 	return Add(r.Origin, Kmul(t, r.Dir))
 }
 
-func (sc Scene) Color(rnd *m.RandState, r0 *Ray) Vec {
+func (sc Scene) Color(rnd *m.RandState, r Ray) Vec {
 	var rec HitRecord
-	r := *r0
 	color := Ones // At infinity
 	for depth := 0; depth < 50; depth++ {
 		// apparently one clips slightly above 0 to avoid "shadow acne"
