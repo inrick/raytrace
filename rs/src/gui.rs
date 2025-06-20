@@ -155,7 +155,7 @@ fn set_egui_style(ctx: &egui::Context) {
 	ctx.set_pixels_per_point(1.);
 	ctx.set_fonts(fonts);
 	ctx.set_style(style);
-  ctx.set_visuals(egui::style::Visuals::light());
+	ctx.set_visuals(egui::style::Visuals::light());
 }
 
 impl App {
@@ -345,11 +345,15 @@ impl eframe::App for App {
 				self.nsamples, self.threads
 			));
 			self.save_status = None;
+			let (nx, ny) = (600, 300);
 			let args = Args {
 				nsamples: self.nsamples,
 				threads: self.threads,
-				cam: new_camera(600, 300, self.look_from, self.look_at),
+				cam: new_camera(nx, ny, self.look_from, self.look_at),
 				scene: self.scene.clone(),
+				nx,
+				ny,
+				depth: 50,
 			};
 			let (tx, rx) = sync_channel(0);
 			self.render_state = RenderState::Running(Instant::now(), rx);

@@ -78,6 +78,18 @@ impl Vec3 {
 	pub fn normalize(self) -> Vec3 {
 		self / self.norm()
 	}
+
+	pub fn dot(self, v: Self) -> f32 {
+		dot(self, v)
+	}
+
+	pub fn cross(self, v: Self) -> Self {
+		cross(self, v)
+	}
+
+	pub fn reflect(self, v: Self) -> Self {
+		reflect(self, v)
+	}
 }
 
 pub fn cross(u: Vec3, v: Vec3) -> Vec3 {

@@ -28,11 +28,19 @@ pub fn run() -> Result<()> {
 		"SAMPLES",
 	);
 	opts.optopt(
+		"d",
+		"depth",
+		"number of iterations [default: 10]",
+		"SAMPLES",
+	);
+	opts.optopt(
 		"t",
 		"threads",
 		"number of threads to run on [default: 8]",
 		"THREADS",
 	);
+	opts.optopt("x", "width", "width of image [default: 600]", "PIXELS");
+	opts.optopt("y", "height", "height of image [default: 300]", "PIXELS");
 
 	let program_args: Vec<String> = std::env::args().collect();
 	let program = program_args[0].clone();
@@ -50,6 +58,14 @@ pub fn run() -> Result<()> {
 	if nsamples == 0 {
 		return Err("number of samples must be a positive number".into());
 	}
+	let depth: u32 = parsed
+		.opt_str("d")
+		.unwrap_or_else(|| "50".to_owned())
+		.parse()
+		.map_err(|_| "depth must be a positive number")?;
+	if depth == 0 {
+		return Err("depth must be a positive number".into());
+	}
 	let threads: u32 = parsed
 		.opt_str("t")
 		.unwrap_or_else(|| "8".to_owned())
@@ -58,17 +74,35 @@ pub fn run() -> Result<()> {
 	if threads == 0 {
 		return Err("number of threads must be a positive number".into());
 	}
+	let nx: u32 = parsed
+		.opt_str("x")
+		.unwrap_or_else(|| "600".to_owned())
+		.parse()
+		.map_err(|_| "image width must be a positive number")?;
+	if nx == 0 {
+		return Err("image width must be a positive number".into());
+	}
+	let ny: u32 = parsed
+		.opt_str("y")
+		.unwrap_or_else(|| "300".to_owned())
+		.parse()
+		.map_err(|_| "image height must be a positive number")?;
+	if ny == 0 {
+		return Err("image height must be a positive number".into());
+	}
 
 	let t0 = Instant::now();
 
-	let (nx, ny) = (600, 300);
 	let cam = camera_default(nx, ny);
 	let scene = small_scene();
 	let args = Args {
 		nsamples,
+		depth,
 		threads,
 		cam,
 		scene,
+		nx,
+		ny,
 	};
 
 	let img = raytrace(&args, nx, ny);

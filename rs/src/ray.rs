@@ -2,11 +2,27 @@ use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
 use crate::vec::*;
 
+#[derive(Debug)]
 pub struct Args {
 	pub nsamples: u32,
 	pub threads: u32,
 	pub cam: Camera,
 	pub scene: Scene,
+	pub nx: u32,
+	pub ny: u32,
+	pub depth: u32,
+}
+
+pub struct RenderArgs<'a> {
+	pub buf: &'a mut [u8],
+	pub cam: &'a Camera,
+	pub scene: &'a Scene,
+	pub nsamples: u32,
+	pub nx: u32,
+	pub ny: u32,
+	pub depth: u32,
+	pub ymin: f32,
+	pub ymax: f32,
 }
 
 pub struct Image {
@@ -97,8 +113,19 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 					len_th as usize,
 				)
 			};
+			let render_args = RenderArgs {
+				buf: bufchunk,
+				cam,
+				scene: sc,
+				nsamples,
+				nx,
+				ny: ny_th,
+				depth: args.depth,
+				ymin,
+				ymax,
+			};
 			s.spawn(move || {
-				render(bufchunk, cam, sc, nsamples, nx, ny_th, (ymin, ymax));
+				render(render_args);
 			});
 			ny_pos += ny_th;
 			bufpos += len_th as usize;
@@ -109,15 +136,18 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 }
 
 #[allow(clippy::identity_op)]
-fn render(
-	buf: &mut [u8],
-	cam: &Camera,
-	sc: &Scene,
-	nsamples: u32,
-	nx: u32,
-	ny: u32,
-	(ymin, ymax): (f32, f32),
-) {
+fn render(args: RenderArgs) {
+	let RenderArgs {
+		buf,
+		cam,
+		scene,
+		nsamples,
+		nx,
+		ny,
+		depth,
+		ymin,
+		ymax,
+	} = args;
 	assert_eq!(buf.len(), (3 * nx * ny) as usize);
 	let yheight = ymax - ymin;
 	let mut bi = 0;
@@ -128,7 +158,7 @@ fn render(
 				let x = (i as f32 + rand32()) / nx as f32;
 				let y = ymin + yheight * (j as f32 + rand32()) / ny as f32;
 				let r = cam.ray_at(x, y);
-				color = color + sc.color(&r);
+				color = color + scene.color(depth, &r);
 			}
 			color = (color / nsamples as f32).sqrt();
 			buf[bi + 0] = (255. * color.x) as u8;
@@ -157,7 +187,7 @@ impl Ray {
 	}
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum Material {
 	Matte { albedo: Vec3 },
 	Metal { albedo: Vec3, fuzz: f32 },
@@ -184,7 +214,7 @@ impl Default for HitRecord {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct Sphere {
 	center: Vec3,
 	radius: f32,
@@ -193,15 +223,15 @@ struct Sphere {
 
 impl Sphere {
 	#[allow(non_snake_case)]
-	fn hit(&self, tmin: f32, tmax: f32, r: &Ray, rec: &mut HitRecord) -> bool {
+	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
 		let oc = r.origin - self.center;
-		let a = dot(r.dir, r.dir);
-		let b = dot(oc, r.dir);
-		let c = dot(oc, oc) - self.radius * self.radius;
+		let a = r.dir.dot(r.dir);
+		let b = oc.dot(r.dir);
+		let c = oc.dot(oc) - self.radius * self.radius;
 		let D = b * b - a * c;
 		if D > 0. {
 			for t in [(-b - D.sqrt()) / a, (-b + D.sqrt()) / a] {
-				if tmin < t && t < tmax {
+				if interval.surrounds(t) {
 					rec.t = t;
 					rec.p = r.eval(t);
 					rec.normal = (rec.p - self.center) / self.radius;
@@ -214,18 +244,18 @@ impl Sphere {
 	}
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Scene {
 	spheres: Vec<Sphere>,
 }
 
 impl Scene {
-	fn color(&self, r0: &Ray) -> Vec3 {
+	fn color(&self, depth: u32, r0: &Ray) -> Vec3 {
 		let mut rec: HitRecord = HitRecord::default();
 		let mut r = *r0;
 		let mut color = ONES;
-		for _depth in 0..50 {
-			if !self.hit(0.001, f32::MAX, &mut r, &mut rec) {
+		for _ in 0..depth {
+			if !self.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
 				let t = 0.5 * (r.dir.normalize().y + 1.);
 				color = color * (vec(0.75, 0.95, 1.0) * t + ONES * (1. - t));
 				break;
@@ -239,17 +269,15 @@ impl Scene {
 
 	fn hit(
 		&self,
-		tmin: f32,
-		tmax: f32,
+		mut interval: Interval,
 		r: &mut Ray,
 		rec: &mut HitRecord,
 	) -> bool {
 		let mut hit = false;
-		let mut closest = tmax;
-		for sph in &self.spheres {
-			if sph.hit(tmin, closest, r, rec) {
+		for sphere in &self.spheres {
+			if sphere.hit(interval, r, rec) {
 				hit = true;
-				closest = rec.t;
+				interval.max = rec.t;
 			}
 		}
 		hit
@@ -257,7 +285,7 @@ impl Scene {
 }
 
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Camera {
 	lower_left_corner: Vec3,
 	horiz: Vec3,
@@ -283,8 +311,8 @@ impl Camera {
 		let half_height = (theta / 2.).tan();
 		let half_width = aspect * half_height;
 		let w = (look_from - look_at).normalize();
-		let u = cross(v_up, w).normalize();
-		let v = cross(w, u);
+		let u = v_up.cross(w).normalize();
+		let v = w.cross(u);
 		let lower_left_corner = look_from
 			- u * focus_dist * half_width
 			- v * focus_dist * half_height
@@ -329,7 +357,7 @@ fn refract(
 	refracted: &mut Vec3,
 ) -> bool {
 	let un = u.normalize();
-	let dt = dot(un, normal);
+	let dt = un.dot(normal);
 	let D = 1. - ni_over_nt * ni_over_nt * (1. - dt * dt);
 	if D > 0. {
 		let v = (un - normal * dt) * ni_over_nt - normal * D.sqrt();
@@ -351,9 +379,9 @@ fn scatter(r: &Ray, p: Vec3, normal: Vec3, mat: Material) -> (Vec3, Ray) {
 			(albedo, scattered)
 		}
 		Metal { albedo, fuzz } => {
-			let reflected = reflect(r.dir.normalize(), normal);
+			let reflected = r.dir.normalize().reflect(normal);
 			let dir = reflected + random_in_unit_ball() * fuzz;
-			let scattered: Ray = if dot(dir, normal) > 0. {
+			let scattered: Ray = if dir.dot(normal) > 0. {
 				Ray { origin: p, dir }
 			} else {
 				*r
@@ -361,7 +389,7 @@ fn scatter(r: &Ray, p: Vec3, normal: Vec3, mat: Material) -> (Vec3, Ray) {
 			(albedo, scattered)
 		}
 		Dielectric { ref_idx } => {
-			let d = dot(r.dir, normal);
+			let d = r.dir.dot(normal);
 			let outward_normal: Vec3;
 			let ni_over_nt: f32;
 			let cosine: f32;
@@ -446,4 +474,107 @@ pub fn small_scene() -> Scene {
 	}
 
 	Scene { spheres }
+}
+
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Interval {
+	pub min: f32,
+	pub max: f32,
+}
+
+impl Interval {
+	pub fn new(min: f32, max: f32) -> Self {
+		Self { min, max }
+	}
+
+	pub fn new_unordered(a: f32, b: f32) -> Self {
+		Self {
+			min: a.min(b),
+			max: a.max(b),
+		}
+	}
+
+	pub fn new_union(a: Self, b: Self) -> Self {
+		Self {
+			min: f32::min(a.min, b.min),
+			max: f32::max(a.max, b.max),
+		}
+	}
+
+	pub fn size(&self) -> f32 {
+		self.max - self.min
+	}
+
+	pub fn contains(&self, x: f32) -> bool {
+		self.min <= x && x <= self.max
+	}
+
+	pub fn surrounds(&self, x: f32) -> bool {
+		self.min < x && x < self.max
+	}
+
+	pub fn clamp(&self, x: f32) -> f32 {
+		f32::min(self.max, f32::max(self.min, x))
+	}
+
+	pub fn expand(&self, delta: f32) -> Self {
+		Self {
+			min: self.min - delta / 2.,
+			max: self.max + delta / 2.,
+		}
+	}
+}
+
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Aabb {
+	pub x: Interval,
+	pub y: Interval,
+	pub z: Interval,
+}
+
+impl Aabb {
+	pub fn new_from_vec(a: Vec3, b: Vec3) -> Self {
+		Self {
+			x: Interval::new_unordered(a.x, b.x),
+			y: Interval::new_unordered(a.y, b.y),
+			z: Interval::new_unordered(a.z, b.z),
+		}
+	}
+
+	pub fn new_from_bbox(b0: Self, b1: Self) -> Self {
+		Self {
+			x: Interval::new_union(b0.x, b1.x),
+			y: Interval::new_union(b0.y, b1.y),
+			z: Interval::new_union(b0.z, b1.z),
+		}
+	}
+
+	pub fn axis_interval(&self, axis: i32) -> Interval {
+		match axis {
+			0 => self.x,
+			1 => self.y,
+			2 => self.z,
+			_ => unreachable!("don't do this"),
+		}
+	}
+}
+
+#[derive(Debug)]
+pub struct BvhTree {
+	pub scene: Scene,
+}
+
+#[derive(Default, Debug, Copy, Clone)]
+pub struct Handle(u32);
+
+#[derive(Debug, Copy, Clone)]
+struct Node {
+	left: Handle,
+	right: Handle,
+}
+
+impl BvhTree {
+	fn new(scene: Scene) -> Self {
+		BvhTree { scene }
+	}
 }
