@@ -6,9 +6,9 @@ use eframe::egui::{self, Color32, ColorImage, Key, Modifiers};
 use eframe::epaint::FontId;
 
 use crate::ray::{
-	raytrace, save_file, small_scene, Args, Camera, CameraConfig, Config, Image,
-	Scene,
+	raytrace, save_file, Args, Camera, CameraConfig, Config, Image, Scene,
 };
+use crate::scene::small_scene;
 use crate::vec::{vec, Vec3};
 
 enum RenderState {

@@ -1,7 +1,9 @@
 #![allow(clippy::identity_op)]
 #![allow(clippy::uninlined_format_args)]
 
+mod math;
 mod ray;
+mod scene;
 mod vec;
 
 #[cfg(not(feature = "gui"))]

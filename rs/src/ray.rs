@@ -1,5 +1,6 @@
 use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
+use crate::math::{deg_to_rad, rand32};
 use crate::vec::*;
 
 #[derive(Debug)]
@@ -43,12 +44,6 @@ pub struct Image {
 	pub nx: u32,
 	pub ny: u32,
 }
-
-fn rand32() -> f32 {
-	rand::random()
-}
-
-static PI: f32 = std::f32::consts::PI;
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = ::std::result::Result<T, Error>;
@@ -179,10 +174,10 @@ fn ppm_write(f: &mut File, buf: &[u8], x: u32, y: u32) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Ray {
-	origin: Vec3,
-	dir: Vec3,
-	time: f32,
+pub struct Ray {
+	pub origin: Vec3,
+	pub dir: Vec3,
+	pub time: f32,
 }
 
 impl Ray {
@@ -192,7 +187,7 @@ impl Ray {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum Material {
+pub enum Material {
 	Matte { albedo: Vec3 },
 	Metal { albedo: Vec3, fuzz: f32 },
 	Dielectric { ref_idx: f32 },
@@ -228,7 +223,7 @@ impl HitRecord {
 }
 
 #[derive(Debug, Clone)]
-struct Sphere {
+pub struct Sphere {
 	center: Ray,
 	radius: f32,
 	mat: Material,
@@ -272,6 +267,12 @@ pub struct SceneHandle(u32);
 #[derive(Debug, Clone)]
 pub struct Scene {
 	spheres: Vec<Sphere>,
+}
+
+impl Scene {
+	pub fn new(spheres: Vec<Sphere>) -> Scene {
+		Scene { spheres }
+	}
 }
 
 fn ray_color(scene: &Scene, depth: u32, r0: &Ray) -> Vec3 {
@@ -363,10 +364,6 @@ pub struct Camera {
 	defocus_disk_v: Vec3,
 }
 
-fn deg_to_rad(deg: f32) -> f32 {
-	deg * PI / 180.
-}
-
 impl Camera {
 	pub fn new(cfg: &Config, ccfg: &CameraConfig) -> Self {
 		let focus_dist = if ccfg.focus_dist != 0. {
@@ -454,10 +451,6 @@ fn ray_color_at_ij(cam: &Camera, scene: &Scene, i: u32, j: u32) -> Vec3 {
 	color
 }
 
-fn sample_square() -> Vec3 {
-	vec(rand32() - 0.5, rand32() + 0.5, 0.)
-}
-
 fn schlick(cosine: f32, ref_idx: f32) -> f32 {
 	let r0 = (1. - ref_idx) / (1. + ref_idx);
 	let r0 = r0 * r0;
@@ -538,95 +531,6 @@ pub fn camera_default(cfg: &Config) -> Camera {
 	};
 
 	Camera::new(cfg, &cam_cfg)
-}
-
-pub fn small_scene() -> Scene {
-	let nspheres = 3 + 360 / 15;
-	let mut spheres = Vec::with_capacity(nspheres);
-
-	spheres.push(Sphere::new_static(
-		vec(0., -1000., 0.),
-		1000.,
-		Material::Matte {
-			albedo: vec(0.88, 0.96, 0.7),
-		},
-	));
-	spheres.push(Sphere::new_static(
-		vec(1.5, 1., 0.),
-		1.,
-		Material::Dielectric { ref_idx: 1.5 },
-	));
-	spheres.push(Sphere::new_static(
-		vec(-1.5, 1., 0.),
-		1.,
-		Material::Metal {
-			albedo: vec(0.8, 0.9, 0.8),
-			fuzz: 0.,
-		},
-	));
-
-	for deg in (0..360).step_by(15) {
-		let x = deg_to_rad(deg as f32).sin();
-		let z = deg_to_rad(deg as f32).cos();
-		let r0 = 3.;
-		let r1 = 0.33 + x * z / 9.;
-		spheres.push(Sphere::new_static(
-			vec(r0 * x, r1, r0 * z),
-			r1,
-			Material::Matte {
-				albedo: vec(x, 0.5 + x * z / 2., z),
-			},
-		));
-	}
-
-	Scene { spheres }
-}
-
-pub fn small_scene_moving() -> Scene {
-	let nspheres = 3 + 360 / 15;
-	let mut spheres = Vec::with_capacity(nspheres);
-
-	spheres.push(Sphere::new_static(
-		vec(0., -1000., 0.),
-		1000.,
-		Material::Matte {
-			albedo: vec(0.88, 0.96, 0.7),
-		},
-	));
-	spheres.push(Sphere::new_static(
-		vec(1.5, 1., 0.),
-		1.,
-		Material::Dielectric { ref_idx: 1.5 },
-	));
-	spheres.push(Sphere::new_static(
-		vec(-1.5, 1., 0.),
-		1.,
-		Material::Metal {
-			albedo: vec(0.8, 0.9, 0.8),
-			fuzz: 0.,
-		},
-	));
-
-	for deg in (0..360).step_by(15) {
-		let x = deg_to_rad(deg as f32).sin();
-		let z = deg_to_rad(deg as f32).cos();
-		let r0 = 3.;
-		let r1 = 0.33 + x * z / 9.;
-		let dir = vec(0., rand32() / 2., 0.);
-		spheres.push(Sphere::new(
-			Ray {
-				origin: vec(r0 * x, r1, r0 * z),
-				dir,
-				time: 0.,
-			},
-			r1,
-			Material::Matte {
-				albedo: vec(x, 0.5 + x * z / 2., z),
-			},
-		));
-	}
-
-	Scene { spheres }
 }
 
 #[derive(Debug, Default, Copy, Clone)]

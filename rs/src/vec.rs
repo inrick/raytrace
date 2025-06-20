@@ -1,3 +1,4 @@
+use crate::math::rand32;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -118,8 +119,8 @@ pub fn lerp(t: f32, u: Vec3, v: Vec3) -> Vec3 {
 	u * (1. - t) + v * t
 }
 
-fn rand32() -> f32 {
-	rand::random()
+pub fn sample_square() -> Vec3 {
+	vec(rand32() - 0.5, rand32() + 0.5, 0.)
 }
 
 pub fn random_in_unit_ball() -> Vec3 {

@@ -1,9 +1,8 @@
 use getopts::Options;
 use std::time::Instant;
 
-use crate::ray::{
-	camera_default, raytrace, save_file, small_scene_moving, Args, Config,
-};
+use crate::ray::{camera_default, raytrace, save_file, Args, Config};
+use crate::scene::small_scene_moving;
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = ::std::result::Result<T, Error>;
