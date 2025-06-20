@@ -10,7 +10,7 @@ pub struct Args {
 	pub scene: Scene,
 	pub nx: u32,
 	pub ny: u32,
-	pub depth: u32,
+	pub max_depth: u32,
 }
 
 pub struct RenderArgs<'a> {
@@ -20,7 +20,7 @@ pub struct RenderArgs<'a> {
 	pub nsamples: u32,
 	pub nx: u32,
 	pub ny: u32,
-	pub depth: u32,
+	pub max_depth: u32,
 	pub ymin: f32,
 	pub ymax: f32,
 }
@@ -90,8 +90,9 @@ pub fn save_file(img: &Image, filename: &str) -> Result<()> {
 pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 	let nsamples = args.nsamples;
 	let threads = args.threads;
-	if threads == 0 || nsamples == 0 {
-		panic!("number of samples and threads must be positive");
+	let max_depth = args.max_depth;
+	if threads == 0 || nsamples == 0 || max_depth == 0 {
+		panic!("number of samples/threads/depth must be positive");
 	}
 
 	let mut buf = vec![0; (3 * nx * ny) as usize];
@@ -104,7 +105,7 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 			let len_th = 3 * nx * ny_th;
 			let ymax = (ny_remaining) as f32 / ny as f32;
 			let ymin = (ny_remaining - ny_th) as f32 / ny as f32;
-			let (cam, sc) = (&args.cam, &args.scene);
+			let (cam, scene) = (&args.cam, &args.scene);
 			// Couldn't find a way to do different sized chunks with buf.chunks_mut
 			// so did the split manually instead.
 			let bufchunk = unsafe {
@@ -116,11 +117,11 @@ pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
 			let render_args = RenderArgs {
 				buf: bufchunk,
 				cam,
-				scene: sc,
+				scene,
 				nsamples,
 				nx,
 				ny: ny_th,
-				depth: args.depth,
+				max_depth,
 				ymin,
 				ymax,
 			};
@@ -144,7 +145,7 @@ fn render(args: RenderArgs) {
 		nsamples,
 		nx,
 		ny,
-		depth,
+		max_depth: depth,
 		ymin,
 		ymax,
 	} = args;
@@ -158,7 +159,7 @@ fn render(args: RenderArgs) {
 				let x = (i as f32 + rand32()) / nx as f32;
 				let y = ymin + yheight * (j as f32 + rand32()) / ny as f32;
 				let r = cam.ray_at(x, y);
-				color = color + scene.color(depth, &r);
+				color = color + ray_color(&scene, depth, &r);
 			}
 			color = (color / nsamples as f32).sqrt();
 			buf[bi + 0] = (255. * color.x) as u8;
@@ -194,23 +195,32 @@ enum Material {
 	Dielectric { ref_idx: f32 },
 }
 
+impl Default for Material {
+	fn default() -> Self {
+		Material::Matte {
+			albedo: Vec3::default(),
+		}
+	}
+}
+
+#[derive(Default)]
 struct HitRecord {
 	t: f32,
 	p: Vec3,
 	normal: Vec3,
 	mat: Material,
+	front_face: bool,
 }
 
-impl Default for HitRecord {
-	fn default() -> Self {
-		HitRecord {
-			t: 0.,
-			p: Vec3::default(),
-			normal: Vec3::default(),
-			mat: Material::Matte {
-				albedo: Vec3::default(),
-			},
-		}
+impl HitRecord {
+	// NOTE: outward_normal is assumed to be of unit length
+	pub fn set_face_normal(&mut self, r: &Ray, outward_normal: Vec3) {
+		self.front_face = r.dir.dot(outward_normal) < 0.;
+		self.normal = if self.front_face {
+			outward_normal
+		} else {
+			-outward_normal
+		};
 	}
 }
 
@@ -221,52 +231,38 @@ struct Sphere {
 	mat: Material,
 }
 
-impl Sphere {
-	#[allow(non_snake_case)]
-	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
-		let oc = r.origin - self.center;
-		let a = r.dir.dot(r.dir);
-		let b = oc.dot(r.dir);
-		let c = oc.dot(oc) - self.radius * self.radius;
-		let D = b * b - a * c;
-		if D > 0. {
-			for t in [(-b - D.sqrt()) / a, (-b + D.sqrt()) / a] {
-				if interval.surrounds(t) {
-					rec.t = t;
-					rec.p = r.eval(t);
-					rec.normal = (rec.p - self.center) / self.radius;
-					rec.mat = self.mat;
-					return true;
-				}
-			}
-		}
-		false
-	}
-}
+//impl Sphere {
+//    pub fn bounding_box(&self) -> Aabb {
+//        //
+//    }
+//}
+
+#[derive(Default, Copy, Clone)]
+pub struct SceneHandle(u32);
 
 #[derive(Debug, Clone)]
 pub struct Scene {
 	spheres: Vec<Sphere>,
 }
 
-impl Scene {
-	fn color(&self, depth: u32, r0: &Ray) -> Vec3 {
-		let mut rec: HitRecord = HitRecord::default();
-		let mut r = *r0;
-		let mut color = ONES;
-		for _ in 0..depth {
-			if !self.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
-				let t = 0.5 * (r.dir.normalize().y + 1.);
-				color = color * (vec(0.75, 0.95, 1.0) * t + ONES * (1. - t));
-				break;
-			}
-			let (attenuation, scattered) = scatter(&r, rec.p, rec.normal, rec.mat);
-			r = scattered;
-			color = color * attenuation;
+fn ray_color(scene: &Scene, depth: u32, r0: &Ray) -> Vec3 {
+	let mut rec: HitRecord = HitRecord::default();
+	let mut r = *r0;
+	let mut color = ONES;
+	for _ in 0..depth {
+		if !scene.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
+			let t = 0.5 * (r.dir.normalize().y + 1.);
+			color = color * (vec(0.75, 0.95, 1.0) * t + ONES * (1. - t));
+			break;
 		}
-		color
+		let (attenuation, scattered) = scatter(&r, &rec);
+		r = scattered;
+		color = color * attenuation;
 	}
+	color
+}
 
+impl Scene {
 	fn hit(
 		&self,
 		mut interval: Interval,
@@ -274,13 +270,51 @@ impl Scene {
 		rec: &mut HitRecord,
 	) -> bool {
 		let mut hit = false;
-		for sphere in &self.spheres {
-			if sphere.hit(interval, r, rec) {
+		for h in self.handles() {
+			if self.hit_obj(h, interval, r, rec) {
 				hit = true;
 				interval.max = rec.t;
 			}
 		}
 		hit
+	}
+
+	fn handles(&self) -> impl Iterator<Item = SceneHandle> {
+		(0..self.spheres.len()).map(|i| SceneHandle(i as u32))
+	}
+
+	#[allow(non_snake_case)]
+	fn hit_obj(
+		&self,
+		h: SceneHandle,
+		interval: Interval,
+		r: &Ray,
+		rec: &mut HitRecord,
+	) -> bool {
+		let sphere = &self.spheres[h.0 as usize];
+		let oc = sphere.center - r.origin;
+		// Note:
+		//
+		//   (-b +- sqrt(b^2 - 4ac))/(2a)  =>  (h +- sqrt(h^2 - ac))/a
+		//
+		// through the substitution b = -2h.
+		let a = r.dir.dot(r.dir);
+		let h = oc.dot(r.dir);
+		let c = oc.dot(oc) - sphere.radius * sphere.radius;
+		let D = h * h - a * c;
+		if D > 0. {
+			for t in [(h - D.sqrt()) / a, (h + D.sqrt()) / a] {
+				if interval.surrounds(t) {
+					rec.t = t;
+					rec.p = r.eval(t);
+					let outward_normal = (rec.p - sphere.center) / sphere.radius;
+					rec.set_face_normal(r, outward_normal);
+					rec.mat = sphere.mat; // TODO: save a handle instead?
+					return true;
+				}
+			}
+		}
+		false
 	}
 }
 
@@ -343,72 +377,81 @@ impl Camera {
 	}
 }
 
+#[derive(Debug, Clone)]
+pub struct Camera2 {
+	image_width: u32,
+	image_height: u32,
+	samples_per_pixel: u32,
+	max_depth: u32,
+	defocus_angle: f32,
+	center: Vec3,
+	pixel_delta_u: Vec3,
+	pixel_delta_v: Vec3,
+	pixel_00_loc: Vec3,
+	defocus_disk_u: Vec3,
+	defocus_disk_v: Vec3,
+}
+
 fn schlick(cosine: f32, ref_idx: f32) -> f32 {
 	let r0 = (1. - ref_idx) / (1. + ref_idx);
 	let r0 = r0 * r0;
 	r0 + (1. - r0) * (1. - cosine).powi(5)
 }
 
-#[allow(non_snake_case)]
-fn refract(
-	u: Vec3,
-	normal: Vec3,
-	ni_over_nt: f32,
-	refracted: &mut Vec3,
-) -> bool {
-	let un = u.normalize();
-	let dt = un.dot(normal);
-	let D = 1. - ni_over_nt * ni_over_nt * (1. - dt * dt);
-	if D > 0. {
-		let v = (un - normal * dt) * ni_over_nt - normal * D.sqrt();
-		*refracted = v;
-		return true;
-	}
-	false
+fn refract(uv: Vec3, n: Vec3, cos_theta: f32, etai_over_etat: f32) -> Vec3 {
+	let r_out_perp = (uv + n * cos_theta) * etai_over_etat;
+	let perp_dot = r_out_perp.dot(r_out_perp);
+	let r_out_par = n * (-f32::sqrt(1. - perp_dot));
+	r_out_perp + r_out_par
 }
 
-fn scatter(r: &Ray, p: Vec3, normal: Vec3, mat: Material) -> (Vec3, Ray) {
+fn scatter(r: &Ray, rec: &HitRecord) -> (Vec3, Ray) {
 	use Material::*;
-	match mat {
+	match rec.mat {
 		Matte { albedo } => {
-			let target = p + normal + random_in_unit_ball();
+			let mut scatter_dir = random_in_unit_ball() + rec.normal;
+			// Guard against the random unit vector pointing opposite to the Normal
+			if scatter_dir.near_zero() {
+				scatter_dir = rec.normal;
+			}
 			let scattered = Ray {
-				origin: p,
-				dir: target - p,
+				origin: rec.p,
+				dir: scatter_dir,
 			};
 			(albedo, scattered)
 		}
 		Metal { albedo, fuzz } => {
-			let reflected = r.dir.normalize().reflect(normal);
-			let dir = reflected + random_in_unit_ball() * fuzz;
-			let scattered: Ray = if dir.dot(normal) > 0. {
-				Ray { origin: p, dir }
-			} else {
+			let reflected = r.dir.reflect(rec.normal);
+			let dir = reflected.normalize() + random_in_unit_ball() * fuzz;
+			let scattered = if dir.dot(rec.normal) <= 0. {
 				*r
+			} else {
+				Ray { origin: rec.p, dir }
 			};
 			(albedo, scattered)
 		}
 		Dielectric { ref_idx } => {
-			let d = r.dir.dot(normal);
-			let outward_normal: Vec3;
-			let ni_over_nt: f32;
-			let cosine: f32;
-			if d > 0. {
-				outward_normal = -normal;
-				ni_over_nt = ref_idx;
-				cosine = ref_idx * d / r.dir.norm();
+			let ref_idx = if rec.front_face {
+				1. / ref_idx
 			} else {
-				outward_normal = normal;
-				ni_over_nt = 1. / ref_idx;
-				cosine = -d / r.dir.norm();
-			}
-			let mut dir = Vec3::default();
-			if !refract(r.dir, outward_normal, ni_over_nt, &mut dir)
-				|| rand32() < schlick(cosine, ref_idx)
-			{
-				dir = reflect(r.dir, normal);
-			}
-			let scattered = Ray { origin: p, dir };
+				ref_idx
+			};
+			let unit_dir = r.dir.normalize();
+			let cos_theta = f32::min(-unit_dir.dot(rec.normal), 1.);
+			let sin_theta = (1. - cos_theta * cos_theta).sqrt();
+			let cannot_refract = ref_idx * sin_theta > 1.;
+			let scattered =
+				if cannot_refract || rand32() < schlick(cos_theta, ref_idx) {
+					Ray {
+						origin: rec.p,
+						dir: unit_dir.reflect(rec.normal),
+					}
+				} else {
+					Ray {
+						origin: rec.p,
+						dir: refract(unit_dir, rec.normal, cos_theta, ref_idx),
+					}
+				};
 			(ONES, scattered)
 		}
 	}

@@ -90,6 +90,12 @@ impl Vec3 {
 	pub fn reflect(self, v: Self) -> Self {
 		reflect(self, v)
 	}
+
+	pub fn near_zero(self) -> bool {
+		self.x.abs() <= f32::EPSILON
+			&& self.y.abs() <= f32::EPSILON
+			&& self.z.abs() <= f32::EPSILON
+	}
 }
 
 pub fn cross(u: Vec3, v: Vec3) -> Vec3 {
@@ -106,6 +112,10 @@ pub fn dot(u: Vec3, v: Vec3) -> f32 {
 
 pub fn reflect(u: Vec3, normal: Vec3) -> Vec3 {
 	u - normal * 2. * dot(u, normal)
+}
+
+pub fn lerp(t: f32, u: Vec3, v: Vec3) -> Vec3 {
+	u * (1. - t) + v * t
 }
 
 fn rand32() -> f32 {

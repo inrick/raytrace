@@ -30,7 +30,7 @@ pub fn run() -> Result<()> {
 	opts.optopt(
 		"d",
 		"depth",
-		"number of iterations [default: 10]",
+		"maximum number of ray bounces [default: 50]",
 		"SAMPLES",
 	);
 	opts.optopt(
@@ -58,12 +58,12 @@ pub fn run() -> Result<()> {
 	if nsamples == 0 {
 		return Err("number of samples must be a positive number".into());
 	}
-	let depth: u32 = parsed
+	let max_depth: u32 = parsed
 		.opt_str("d")
 		.unwrap_or_else(|| "50".to_owned())
 		.parse()
 		.map_err(|_| "depth must be a positive number")?;
-	if depth == 0 {
+	if max_depth == 0 {
 		return Err("depth must be a positive number".into());
 	}
 	let threads: u32 = parsed
@@ -97,7 +97,7 @@ pub fn run() -> Result<()> {
 	let scene = small_scene();
 	let args = Args {
 		nsamples,
-		depth,
+		max_depth,
 		threads,
 		cam,
 		scene,

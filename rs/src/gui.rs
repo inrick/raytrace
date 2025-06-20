@@ -353,7 +353,7 @@ impl eframe::App for App {
 				scene: self.scene.clone(),
 				nx,
 				ny,
-				depth: 50,
+				max_depth: 50,
 			};
 			let (tx, rx) = sync_channel(0);
 			self.render_state = RenderState::Running(Instant::now(), rx);
