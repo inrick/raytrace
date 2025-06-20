@@ -114,9 +114,8 @@ pub fn raytrace(args: &Args) -> Image {
 		let mut ypos = 0u32;
 		for i in 0..threads {
 			let chunk = (cam.image_height - ypos) / (threads - i);
-			let buf_alias = unsafe {
-				&mut *std::ptr::slice_from_raw_parts_mut(buf.as_mut_ptr(), buf.len())
-			};
+			let buf_alias =
+				unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
 			let render_args = ThreadArgs {
 				buf: buf_alias,
 				cam,
