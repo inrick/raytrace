@@ -125,6 +125,17 @@ fn rand32() -> f32 {
 pub fn random_in_unit_ball() -> Vec3 {
 	loop {
 		let u = vec(rand32(), rand32(), rand32()) * 2. - ONES;
+		let norm = u.norm();
+		if f32::EPSILON < norm && norm < 1. {
+			return u;
+		}
+	}
+}
+
+pub fn random_in_unit_disk() -> Vec3 {
+	let ones_xy = vec(1., 1., 0.);
+	loop {
+		let u = vec(rand32(), rand32(), 0.) * 2. - ones_xy;
 		if u.norm() < 1. {
 			return u;
 		}

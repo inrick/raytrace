@@ -3,26 +3,39 @@ use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 use crate::vec::*;
 
 #[derive(Debug)]
-pub struct Args {
+pub struct Config {
 	pub nsamples: u32,
 	pub threads: u32,
-	pub cam: Camera,
-	pub scene: Scene,
 	pub nx: u32,
 	pub ny: u32,
 	pub max_depth: u32,
 }
 
-pub struct RenderArgs<'a> {
-	pub buf: &'a mut [u8],
-	pub cam: &'a Camera,
-	pub scene: &'a Scene,
-	pub nsamples: u32,
-	pub nx: u32,
-	pub ny: u32,
-	pub max_depth: u32,
-	pub ymin: f32,
-	pub ymax: f32,
+#[derive(Debug)]
+pub struct CameraConfig {
+	pub fov: f32,
+	pub look_from: Vec3,
+	pub look_at: Vec3,
+	pub v_up: Vec3,
+	pub defocus_angle: f32,
+	pub focus_dist: f32,
+}
+
+#[derive(Debug)]
+pub struct Args {
+	pub cfg: Config,
+	pub cam: Camera,
+	pub scene: Scene,
+}
+
+struct ThreadArgs<'a> {
+	buf: &'a mut [u8],
+	cam: &'a Camera,
+	scene: &'a Scene,
+	x0: u32,
+	x1: u32,
+	y0: u32,
+	y1: u32,
 }
 
 pub struct Image {
@@ -87,85 +100,74 @@ pub fn save_file(img: &Image, filename: &str) -> Result<()> {
 	image_writer(&mut f, &img.buf, img.nx, img.ny)
 }
 
-pub fn raytrace(args: &Args, nx: u32, ny: u32) -> Image {
-	let nsamples = args.nsamples;
-	let threads = args.threads;
-	let max_depth = args.max_depth;
+pub fn raytrace(args: &Args) -> Image {
+	let Config {
+		nsamples,
+		threads,
+		nx,
+		ny,
+		max_depth,
+	} = args.cfg;
 	if threads == 0 || nsamples == 0 || max_depth == 0 {
 		panic!("number of samples/threads/depth must be positive");
 	}
+	let cam = &args.cam;
+	let scene = &args.scene;
 
 	let mut buf = vec![0; (3 * nx * ny) as usize];
 	std::thread::scope(|s| {
-		let mut ny_pos: u32 = 0;
-		let mut bufpos: usize = 0;
+		let mut ypos = 0u32;
 		for i in 0..threads {
-			let ny_remaining = ny - ny_pos;
-			let ny_th = ny_remaining / (threads - i);
-			let len_th = 3 * nx * ny_th;
-			let ymax = (ny_remaining) as f32 / ny as f32;
-			let ymin = (ny_remaining - ny_th) as f32 / ny as f32;
-			let (cam, scene) = (&args.cam, &args.scene);
-			// Couldn't find a way to do different sized chunks with buf.chunks_mut
-			// so did the split manually instead.
-			let bufchunk = unsafe {
-				&mut *std::ptr::slice_from_raw_parts_mut(
-					buf.as_mut_ptr().add(bufpos),
-					len_th as usize,
-				)
+			let chunk = (cam.image_height - ypos) / (threads - i);
+			let buf_alias = unsafe {
+				&mut *std::ptr::slice_from_raw_parts_mut(buf.as_mut_ptr(), buf.len())
 			};
-			let render_args = RenderArgs {
-				buf: bufchunk,
+			let render_args = ThreadArgs {
+				buf: buf_alias,
 				cam,
 				scene,
-				nsamples,
-				nx,
-				ny: ny_th,
-				max_depth,
-				ymin,
-				ymax,
+				x0: 0,
+				x1: cam.image_width,
+				y0: ypos,
+				y1: ypos + chunk,
 			};
 			s.spawn(move || {
 				render(render_args);
 			});
-			ny_pos += ny_th;
-			bufpos += len_th as usize;
+			ypos += chunk;
 		}
 	});
 
 	Image { buf, nx, ny }
 }
 
+fn linear_to_gamma(lin: f32) -> f32 {
+	if lin > 0. {
+		lin.sqrt()
+	} else {
+		lin
+	}
+}
+
 #[allow(clippy::identity_op)]
-fn render(args: RenderArgs) {
-	let RenderArgs {
+fn render(args: ThreadArgs) {
+	let ThreadArgs {
 		buf,
 		cam,
 		scene,
-		nsamples,
-		nx,
-		ny,
-		max_depth: depth,
-		ymin,
-		ymax,
+		x0,
+		x1,
+		y0,
+		y1,
 	} = args;
-	assert_eq!(buf.len(), (3 * nx * ny) as usize);
-	let yheight = ymax - ymin;
-	let mut bi = 0;
-	for j in (0..ny).rev() {
-		for i in 0..nx {
-			let mut color = Vec3::default();
-			for _ in 0..nsamples {
-				let x = (i as f32 + rand32()) / nx as f32;
-				let y = ymin + yheight * (j as f32 + rand32()) / ny as f32;
-				let r = cam.ray_at(x, y);
-				color = color + ray_color(&scene, depth, &r);
-			}
-			color = (color / nsamples as f32).sqrt();
-			buf[bi + 0] = (255. * color.x) as u8;
-			buf[bi + 1] = (255. * color.y) as u8;
-			buf[bi + 2] = (255. * color.z) as u8;
-			bi += 3;
+	let stride = cam.image_width;
+	for j in y0..y1 {
+		for i in x0..x1 {
+			let color = ray_color_at_ij(cam, scene, i, j);
+			let pos = 3 * (j * stride + i) as usize;
+			buf[pos + 0] = (255. * linear_to_gamma(color.x)) as u8;
+			buf[pos + 1] = (255. * linear_to_gamma(color.y)) as u8;
+			buf[pos + 2] = (255. * linear_to_gamma(color.z)) as u8;
 		}
 	}
 }
@@ -176,10 +178,11 @@ fn ppm_write(f: &mut File, buf: &[u8], x: u32, y: u32) -> Result<()> {
 	Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Ray {
 	origin: Vec3,
 	dir: Vec3,
+	time: f32,
 }
 
 impl Ray {
@@ -226,16 +229,42 @@ impl HitRecord {
 
 #[derive(Debug, Clone)]
 struct Sphere {
-	center: Vec3,
+	center: Ray,
 	radius: f32,
 	mat: Material,
 }
 
-//impl Sphere {
-//    pub fn bounding_box(&self) -> Aabb {
-//        //
-//    }
-//}
+impl Sphere {
+	pub fn new(center: Ray, radius: f32, mat: Material) -> Self {
+		Sphere {
+			center,
+			radius,
+			mat,
+		}
+	}
+
+	pub fn new_static(center: Vec3, radius: f32, mat: Material) -> Self {
+		Sphere {
+			center: Ray {
+				origin: center,
+				dir: Vec3::default(),
+				time: 0.,
+			},
+			radius,
+			mat,
+		}
+	}
+
+	pub fn bounding_box(&self) -> Aabb {
+		let center = self.center;
+		let r_vec = vec(self.radius, self.radius, self.radius);
+		let box1 =
+			Aabb::new_from_vec(center.eval(0.) - r_vec, center.eval(0.) + r_vec);
+		let box2 =
+			Aabb::new_from_vec(center.eval(1.) - r_vec, center.eval(1.) + r_vec);
+		Aabb::new_from_bbox(box1, box2)
+	}
+}
 
 #[derive(Default, Copy, Clone)]
 pub struct SceneHandle(u32);
@@ -252,7 +281,7 @@ fn ray_color(scene: &Scene, depth: u32, r0: &Ray) -> Vec3 {
 	for _ in 0..depth {
 		if !scene.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
 			let t = 0.5 * (r.dir.normalize().y + 1.);
-			color = color * (vec(0.75, 0.95, 1.0) * t + ONES * (1. - t));
+			color = color * lerp(t, ONES, vec(0.75, 0.95, 1.0));
 			break;
 		}
 		let (attenuation, scattered) = scatter(&r, &rec);
@@ -292,7 +321,8 @@ impl Scene {
 		rec: &mut HitRecord,
 	) -> bool {
 		let sphere = &self.spheres[h.0 as usize];
-		let oc = sphere.center - r.origin;
+		let center = sphere.center.eval(r.time);
+		let oc = center - r.origin;
 		// Note:
 		//
 		//   (-b +- sqrt(b^2 - 4ac))/(2a)  =>  (h +- sqrt(h^2 - ac))/a
@@ -307,7 +337,7 @@ impl Scene {
 				if interval.surrounds(t) {
 					rec.t = t;
 					rec.p = r.eval(t);
-					let outward_normal = (rec.p - sphere.center) / sphere.radius;
+					let outward_normal = (rec.p - center) / sphere.radius;
 					rec.set_face_normal(r, outward_normal);
 					rec.mat = sphere.mat; // TODO: save a handle instead?
 					return true;
@@ -318,67 +348,8 @@ impl Scene {
 	}
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Camera {
-	lower_left_corner: Vec3,
-	horiz: Vec3,
-	vert: Vec3,
-	origin: Vec3,
-	u: Vec3,
-	v: Vec3,
-	w: Vec3,
-	lens_radius: f32,
-}
-
-impl Camera {
-	pub fn new(
-		look_from: Vec3,
-		look_at: Vec3,
-		v_up: Vec3,
-		vfov: f32,
-		aspect: f32,
-		aperture: f32,
-		focus_dist: f32,
-	) -> Self {
-		let theta = vfov * PI / 180.;
-		let half_height = (theta / 2.).tan();
-		let half_width = aspect * half_height;
-		let w = (look_from - look_at).normalize();
-		let u = v_up.cross(w).normalize();
-		let v = w.cross(u);
-		let lower_left_corner = look_from
-			- u * focus_dist * half_width
-			- v * focus_dist * half_height
-			- w * focus_dist;
-
-		Camera {
-			lower_left_corner,
-			horiz: u * 2. * half_width * focus_dist,
-			vert: v * 2. * half_height * focus_dist,
-			origin: look_from,
-			u,
-			v,
-			w,
-			lens_radius: aperture / 2.,
-		}
-	}
-
-	fn ray_at(&self, x: f32, y: f32) -> Ray {
-		let rd = random_in_unit_ball() * self.lens_radius;
-		let offset = self.u * rd.x + self.v * rd.y;
-		let dir = self.lower_left_corner + (self.horiz * x + self.vert * y)
-			- self.origin
-			- offset;
-		Ray {
-			origin: self.origin + offset,
-			dir,
-		}
-	}
-}
-
-#[derive(Debug, Clone)]
-pub struct Camera2 {
 	image_width: u32,
 	image_height: u32,
 	samples_per_pixel: u32,
@@ -390,6 +361,101 @@ pub struct Camera2 {
 	pixel_00_loc: Vec3,
 	defocus_disk_u: Vec3,
 	defocus_disk_v: Vec3,
+}
+
+fn deg_to_rad(deg: f32) -> f32 {
+	deg * PI / 180.
+}
+
+impl Camera {
+	pub fn new(cfg: &Config, ccfg: &CameraConfig) -> Self {
+		let focus_dist = if ccfg.focus_dist != 0. {
+			ccfg.focus_dist
+		} else {
+			(ccfg.look_from - ccfg.look_at).norm()
+		};
+		let aspect_ratio = (cfg.nx as f32) / (cfg.ny as f32);
+		let image_width = cfg.nx;
+		let image_height = cfg.ny;
+		let samples_per_pixel = cfg.nsamples;
+		let max_depth = cfg.max_depth;
+
+		let defocus_angle = ccfg.defocus_angle;
+
+		let center = ccfg.look_from;
+		let theta = deg_to_rad(ccfg.fov);
+		let h = (theta / 2.).tan();
+		let viewport_height = 2. * h * focus_dist;
+		let viewport_width = viewport_height * aspect_ratio;
+
+		// Camera plane in uv coordinates, with w perpendicular to uv such that
+		// "VUp" orients the camera rotation.
+		let w = (ccfg.look_from - ccfg.look_at).normalize();
+		let u = ccfg.v_up.cross(w);
+		let v = w.cross(u);
+
+		let viewport_u = u * viewport_width;
+		let viewport_v = v * -viewport_height;
+		let pixel_delta_u = viewport_u / (image_width as f32);
+		let pixel_delta_v = viewport_v / (image_height as f32);
+		let upper_left =
+			center - w * focus_dist - viewport_u / 2. - viewport_v / 2.;
+		let pixel_00_loc = upper_left + (pixel_delta_u + pixel_delta_v) * 2.;
+
+		let defocus_radius = deg_to_rad(ccfg.defocus_angle / 2.).tan();
+		let defocus_disk_u = u * defocus_radius;
+		let defocus_disk_v = v * defocus_radius;
+
+		Camera {
+			image_width,
+			image_height,
+			samples_per_pixel,
+			max_depth,
+			defocus_angle,
+			center,
+			pixel_delta_u,
+			pixel_delta_v,
+			pixel_00_loc,
+			defocus_disk_u,
+			defocus_disk_v,
+		}
+	}
+
+	fn sample_ray_around_ij(&self, i: u32, j: u32) -> Ray {
+		let offset = sample_square();
+		let pixel_sample = self.pixel_00_loc
+			+ self.pixel_delta_u * (i as f32 + offset.x)
+			+ self.pixel_delta_v * (j as f32 + offset.y);
+		let origin = if self.defocus_angle > 0. {
+			self.defocus_disk_sample()
+		} else {
+			self.center
+		};
+		Ray {
+			origin,
+			dir: pixel_sample - self.center,
+			time: rand32(),
+		}
+	}
+
+	fn defocus_disk_sample(&self) -> Vec3 {
+		let p = random_in_unit_disk();
+		self.center + self.defocus_disk_u * p.x + self.defocus_disk_v * p.y
+	}
+}
+
+fn ray_color_at_ij(cam: &Camera, scene: &Scene, i: u32, j: u32) -> Vec3 {
+	let mut color = Vec3::default();
+	for _ in 0..cam.samples_per_pixel {
+		let ray = cam.sample_ray_around_ij(i, j);
+		color = color + ray_color(scene, cam.max_depth, &ray);
+	}
+	color = color / (cam.samples_per_pixel as f32);
+	color
+}
+
+fn sample_square() -> Vec3 {
+	vec(rand32() - 0.5, rand32() + 0.5, 0.)
 }
 
 fn schlick(cosine: f32, ref_idx: f32) -> f32 {
@@ -417,6 +483,7 @@ fn scatter(r: &Ray, rec: &HitRecord) -> (Vec3, Ray) {
 			let scattered = Ray {
 				origin: rec.p,
 				dir: scatter_dir,
+				time: r.time,
 			};
 			(albedo, scattered)
 		}
@@ -426,7 +493,11 @@ fn scatter(r: &Ray, rec: &HitRecord) -> (Vec3, Ray) {
 			let scattered = if dir.dot(rec.normal) <= 0. {
 				*r
 			} else {
-				Ray { origin: rec.p, dir }
+				Ray {
+					origin: rec.p,
+					dir,
+					time: r.time,
+				}
 			};
 			(albedo, scattered)
 		}
@@ -440,80 +511,72 @@ fn scatter(r: &Ray, rec: &HitRecord) -> (Vec3, Ray) {
 			let cos_theta = f32::min(-unit_dir.dot(rec.normal), 1.);
 			let sin_theta = (1. - cos_theta * cos_theta).sqrt();
 			let cannot_refract = ref_idx * sin_theta > 1.;
-			let scattered =
-				if cannot_refract || rand32() < schlick(cos_theta, ref_idx) {
-					Ray {
-						origin: rec.p,
-						dir: unit_dir.reflect(rec.normal),
-					}
-				} else {
-					Ray {
-						origin: rec.p,
-						dir: refract(unit_dir, rec.normal, cos_theta, ref_idx),
-					}
-				};
+			let dir = if cannot_refract || rand32() < schlick(cos_theta, ref_idx) {
+				unit_dir.reflect(rec.normal)
+			} else {
+				refract(unit_dir, rec.normal, cos_theta, ref_idx)
+			};
+			let scattered = Ray {
+				origin: rec.p,
+				dir,
+				time: r.time,
+			};
 			(ONES, scattered)
 		}
 	}
 }
 
 #[cfg(not(feature = "gui"))]
-pub fn camera_default(nx: u32, ny: u32) -> Camera {
-	let look_from = vec(10., 2.5, 5.);
-	let look_at = vec(-4., 0., -2.);
-	let dist_to_focus = (look_from - look_at).norm();
-	let aperture = 0.05;
+pub fn camera_default(cfg: &Config) -> Camera {
+	let cam_cfg = CameraConfig {
+		fov: 20.,
+		look_from: vec(10., 2.5, 5.),
+		look_at: vec(-4., 0., -2.),
+		v_up: vec(0., 1., 0.),
+		defocus_angle: 1.,
+		focus_dist: 0.,
+	};
 
-	let (nxf, nyf) = (nx as f32, ny as f32);
-
-	Camera::new(
-		look_from,
-		look_at,
-		vec(0., 1., 0.),
-		20.,
-		nxf / nyf,
-		aperture,
-		dist_to_focus,
-	)
+	Camera::new(cfg, &cam_cfg)
 }
 
 pub fn small_scene() -> Scene {
 	let nspheres = 3 + 360 / 15;
 	let mut spheres = Vec::with_capacity(nspheres);
 
-	spheres.push(Sphere {
-		center: vec(0., -1000., 0.),
-		radius: 1000.,
-		mat: Material::Matte {
+	spheres.push(Sphere::new_static(
+		vec(0., -1000., 0.),
+		1000.,
+		Material::Matte {
 			albedo: vec(0.88, 0.96, 0.7),
 		},
-	});
-	spheres.push(Sphere {
-		center: vec(1.5, 1., 0.),
-		radius: 1.,
-		mat: Material::Dielectric { ref_idx: 1.5 },
-	});
-	spheres.push(Sphere {
-		center: vec(-1.5, 1., 0.),
-		radius: 1.,
-		mat: Material::Metal {
+	));
+	spheres.push(Sphere::new_static(
+		vec(1.5, 1., 0.),
+		1.,
+		Material::Dielectric { ref_idx: 1.5 },
+	));
+	spheres.push(Sphere::new_static(
+		vec(-1.5, 1., 0.),
+		1.,
+		Material::Metal {
 			albedo: vec(0.8, 0.9, 0.8),
 			fuzz: 0.,
 		},
-	});
+	));
 
 	for deg in (0..360).step_by(15) {
-		let x = ((deg as f32) * PI / 180.).sin();
-		let z = ((deg as f32) * PI / 180.).cos();
+		let x = deg_to_rad(deg as f32).sin();
+		let z = deg_to_rad(deg as f32).cos();
 		let r0 = 3.;
 		let r1 = 0.33 + x * z / 9.;
-		spheres.push(Sphere {
-			center: vec(r0 * x, r1, r0 * z),
-			radius: r1,
-			mat: Material::Matte {
+		spheres.push(Sphere::new_static(
+			vec(r0 * x, r1, r0 * z),
+			r1,
+			Material::Matte {
 				albedo: vec(x, 0.5 + x * z / 2., z),
 			},
-		});
+		));
 	}
 
 	Scene { spheres }

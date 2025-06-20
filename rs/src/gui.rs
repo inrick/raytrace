@@ -6,7 +6,8 @@ use eframe::egui::{self, Color32, ColorImage, Key, Modifiers};
 use eframe::epaint::FontId;
 
 use crate::ray::{
-	raytrace, save_file, small_scene, Args, Camera, Image, Scene,
+	raytrace, save_file, small_scene, Args, Camera, CameraConfig, Config, Image,
+	Scene,
 };
 use crate::vec::{vec, Vec3};
 
@@ -165,7 +166,7 @@ impl App {
 		std::thread::spawn(move || {
 			while let Ok((args, tx)) = rx.recv() {
 				let t0 = Instant::now();
-				let image = raytrace(&args, 600, 300);
+				let image = raytrace(&args);
 				let t1 = Instant::now();
 				tx.send(Message { image, t0, t1 }).unwrap();
 			}
@@ -346,14 +347,18 @@ impl eframe::App for App {
 			));
 			self.save_status = None;
 			let (nx, ny) = (600, 300);
-			let args = Args {
+			let cfg = Config {
 				nsamples: self.nsamples,
 				threads: self.threads,
-				cam: new_camera(nx, ny, self.look_from, self.look_at),
-				scene: self.scene.clone(),
 				nx,
 				ny,
 				max_depth: 50,
+			};
+			let cam = new_camera(&cfg, self.look_from, self.look_at);
+			let args = Args {
+				cfg,
+				cam,
+				scene: self.scene.clone(),
 			};
 			let (tx, rx) = sync_channel(0);
 			self.render_state = RenderState::Running(Instant::now(), rx);
@@ -397,19 +402,15 @@ impl UiExtensions for egui::Ui {
 	}
 }
 
-fn new_camera(nx: u32, ny: u32, look_from: Vec3, look_at: Vec3) -> Camera {
-	let dist_to_focus = (look_from - look_at).norm();
-	let aperture = 0.05;
-
-	let (nxf, nyf) = (nx as f32, ny as f32);
-
-	Camera::new(
+fn new_camera(cfg: &Config, look_from: Vec3, look_at: Vec3) -> Camera {
+	let cam_cfg = CameraConfig {
+		fov: 20.,
 		look_from,
 		look_at,
-		vec(0., 1., 0.),
-		20.,
-		nxf / nyf,
-		aperture,
-		dist_to_focus,
-	)
+		v_up: vec(0., 1., 0.),
+		defocus_angle: 1.,
+		focus_dist: 0.,
+	};
+
+	Camera::new(cfg, &cam_cfg)
 }

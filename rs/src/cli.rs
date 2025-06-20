@@ -1,7 +1,9 @@
 use getopts::Options;
 use std::time::Instant;
 
-use crate::ray::{camera_default, raytrace, save_file, small_scene, Args};
+use crate::ray::{
+	camera_default, raytrace, save_file, small_scene, Args, Config,
+};
 
 type Error = Box<dyn std::error::Error>;
 type Result<T> = ::std::result::Result<T, Error>;
@@ -93,19 +95,19 @@ pub fn run() -> Result<()> {
 
 	let t0 = Instant::now();
 
-	let cam = camera_default(nx, ny);
-	let scene = small_scene();
-	let args = Args {
+	let cfg = Config {
 		nsamples,
 		max_depth,
 		threads,
-		cam,
-		scene,
 		nx,
 		ny,
 	};
 
-	let img = raytrace(&args, nx, ny);
+	let cam = camera_default(&cfg);
+	let scene = small_scene();
+	let args = Args { cfg, cam, scene };
+
+	let img = raytrace(&args);
 
 	let t1 = Instant::now();
 	println!(
