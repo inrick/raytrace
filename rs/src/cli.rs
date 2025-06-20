@@ -2,7 +2,7 @@ use getopts::Options;
 use std::time::Instant;
 
 use crate::ray::{
-	camera_default, raytrace, save_file, small_scene, Args, Config,
+	camera_default, raytrace, save_file, small_scene_moving, Args, Config,
 };
 
 type Error = Box<dyn std::error::Error>;
@@ -104,7 +104,7 @@ pub fn run() -> Result<()> {
 	};
 
 	let cam = camera_default(&cfg);
-	let scene = small_scene();
+	let scene = small_scene_moving();
 	let args = Args { cfg, cam, scene };
 
 	let img = raytrace(&args);
