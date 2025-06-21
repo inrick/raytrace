@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::num::NonZero;
 use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
 use crate::math::{deg_to_rad, rand32, rand_int};
@@ -6,11 +7,11 @@ use crate::vec::*;
 
 #[derive(Debug)]
 pub struct Config {
-	pub nsamples: u32,
+	pub nsamples: NonZero<u32>,
 	pub threads: u32,
-	pub nx: u32,
-	pub ny: u32,
-	pub max_depth: u32,
+	pub nx: NonZero<u32>,
+	pub ny: NonZero<u32>,
+	pub max_depth: NonZero<u32>,
 }
 
 #[derive(Debug)]
@@ -40,8 +41,8 @@ struct ThreadArgs<'a> {
 
 pub struct Image {
 	pub buf: Vec<u8>,
-	pub nx: u32,
-	pub ny: u32,
+	pub nx: NonZero<u32>,
+	pub ny: NonZero<u32>,
 }
 
 type Error = Box<dyn std::error::Error>;
@@ -91,30 +92,34 @@ pub fn save_file(img: &Image, filename: &str) -> Result<()> {
 		}
 	};
 	let mut f = File::create(filename)?;
-	image_writer(&mut f, &img.buf, img.nx, img.ny)
+	image_writer(&mut f, &img.buf, img.nx.get(), img.ny.get())
 }
 
 pub fn raytrace(args: &Args) -> Image {
 	let Config {
-		nsamples,
-		threads,
+		nsamples: _,
+		mut threads,
 		nx,
 		ny,
-		max_depth,
+		max_depth: _,
 	} = args.cfg;
-	if threads == 0 || nsamples == 0 || max_depth == 0 {
-		panic!("number of samples/threads/depth must be positive");
-	}
+	if threads == 0 {
+		threads = match std::thread::available_parallelism() {
+			Ok(n) => 2 * n.get() as u32,
+			_ => 1,
+		};
+	};
 	let cam = &args.cam;
 	let bvh_tree = BvhTree::new(&args.scene);
 
-	let mut buf: Vec<u8> = vec![0; (3 * nx * ny) as usize];
+	let mut buf: Vec<u8> =
+		vec![0; (3 * cam.image_width * cam.image_height) as usize];
 	std::thread::scope(|s| {
 		let mut ypos = 0u32;
 		let mut buf = buf.as_mut_slice();
 		for i in 0..threads {
-			let chunk = (cam.image_height - ypos) / (threads - i);
-			let chunk_size = (3 * cam.image_width * chunk) as usize;
+			let chunk_rows = (cam.image_height - ypos) / (threads - i);
+			let chunk_size = (3 * cam.image_width * chunk_rows) as usize;
 			let (buf_thread, buf_next) = buf.split_at_mut(chunk_size);
 			buf = buf_next;
 			let render_args = ThreadArgs {
@@ -122,12 +127,12 @@ pub fn raytrace(args: &Args) -> Image {
 				cam,
 				scene: &bvh_tree,
 				y0: ypos,
-				y1: ypos + chunk,
+				y1: ypos + chunk_rows,
 			};
 			s.spawn(move || {
 				render(render_args);
 			});
-			ypos += chunk;
+			ypos += chunk_rows;
 		}
 	});
 
@@ -421,11 +426,11 @@ impl Camera {
 		} else {
 			(ccfg.look_from - ccfg.look_at).norm()
 		};
-		let aspect_ratio = (cfg.nx as f32) / (cfg.ny as f32);
-		let image_width = cfg.nx;
-		let image_height = cfg.ny;
-		let samples_per_pixel = cfg.nsamples;
-		let max_depth = cfg.max_depth;
+		let image_width = cfg.nx.get();
+		let image_height = cfg.ny.get();
+		let aspect_ratio = (image_width as f32) / (image_height as f32);
+		let samples_per_pixel = cfg.nsamples.get();
+		let max_depth = cfg.max_depth.get();
 
 		let defocus_angle = ccfg.defocus_angle;
 

@@ -1,3 +1,4 @@
+use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::time::Instant;
@@ -92,7 +93,7 @@ struct ImageResult {
 
 impl From<&Image> for ColorImage {
 	fn from(img: &Image) -> ColorImage {
-		let size = [img.nx as usize, img.ny as usize];
+		let size = [img.nx.get() as usize, img.ny.get() as usize];
 		let mut cimg = ColorImage::new(size, Color32::BLACK);
 		for (i, pixel) in cimg.pixels.iter_mut().enumerate() {
 			let r = img.buf[3 * i + 0];
@@ -348,11 +349,11 @@ impl eframe::App for App {
 			self.save_status = None;
 			let (nx, ny) = (600, 300);
 			let cfg = Config {
-				nsamples: self.nsamples,
+				nsamples: NonZero::new(self.nsamples).unwrap(),
 				threads: self.threads,
-				nx,
-				ny,
-				max_depth: 50,
+				nx: NonZero::new(nx).unwrap(),
+				ny: NonZero::new(ny).unwrap(),
+				max_depth: NonZero::new(50).unwrap(),
 			};
 			let cam = new_camera(&cfg, self.look_from, self.look_at);
 			let args = Args {
