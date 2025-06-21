@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::num::NonZero;
 use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
-use crate::math::{deg_to_rad, rand32, rand_int};
+use crate::math::{deg_to_rad, rand32};
 use crate::vec::*;
 
 #[derive(Debug)]
@@ -593,6 +593,11 @@ pub struct Interval {
 }
 
 impl Interval {
+	pub const EMPTY: Self = Self {
+		min: f32::MAX,
+		max: f32::MIN,
+	};
+
 	pub fn new(min: f32, max: f32) -> Self {
 		Self { min, max }
 	}
@@ -643,6 +648,12 @@ pub struct Aabb {
 }
 
 impl Aabb {
+	pub const EMPTY: Self = Self {
+		x: Interval::EMPTY,
+		y: Interval::EMPTY,
+		z: Interval::EMPTY,
+	};
+
 	pub fn new_from_vec(a: Vec3, b: Vec3) -> Self {
 		Self {
 			x: Interval::new_unordered(a.x, b.x),
@@ -735,7 +746,6 @@ pub enum Handle {
 
 #[derive(Default, Debug, Copy, Clone)]
 struct BvhNode {
-	// TODO: option and one element on top?
 	left: Handle,
 	right: Handle,
 	bbox: Aabb,
@@ -743,31 +753,23 @@ struct BvhNode {
 
 impl<'a> BvhTree<'a> {
 	fn new(scene: &'a Scene) -> BvhTree<'a> {
-		let handles: Vec<SceneHandle> = scene.handles().collect();
-
 		let mut bvh = Self {
 			start: Handle::Empty,
 			scene,
 			nodes: Vec::new(),
 		};
-		bvh.start = bvh.add_node(&handles);
+		let mut handles: Vec<SceneHandle> = scene.handles().collect();
+		bvh.start = bvh.add_node(&mut handles);
 		bvh
 	}
 
-	fn add_node(&mut self, handles: &[SceneHandle]) -> Handle {
+	fn add_node(&mut self, handles: &mut [SceneHandle]) -> Handle {
 		match handles {
-			&[] => Handle::Empty,
-			&[h] => Handle::SceneHandle(h),
-			&[l, r] => {
-				let left = Handle::SceneHandle(l);
-				let right = Handle::SceneHandle(r);
-				let bbox = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
-				self.push_node(BvhNode { left, right, bbox })
-			}
+			&mut [] => Handle::Empty,
+			&mut [h] => Handle::SceneHandle(h),
 			_ => {
-				let mut handles: Vec<SceneHandle> = handles.to_owned();
-				let mut bbox = Aabb::default();
-				for &h in &handles {
+				let mut bbox = Aabb::EMPTY;
+				for &h in handles.iter() {
 					bbox = Aabb::new_from_bbox(bbox, self.scene.obj_bbox(h));
 				}
 				let axis = bbox.longest_axis();
@@ -775,18 +777,11 @@ impl<'a> BvhTree<'a> {
 				handles.sort_by(comparator);
 
 				let mid = handles.len() / 2;
-				let left = self.add_node(&handles[..mid]);
-				let right = self.add_node(&handles[mid..]);
+				let (handles_left, handles_right) = handles.split_at_mut(mid);
+				let left = self.add_node(handles_left);
+				let right = self.add_node(handles_right);
 				self.push_node(BvhNode { left, right, bbox })
 			}
-		}
-	}
-
-	fn bbox(&self, h: Handle) -> Aabb {
-		match h {
-			Handle::Empty => Aabb::default(),
-			Handle::BvhHandle(h) => self.nodes[h as usize].bbox,
-			Handle::SceneHandle(h) => self.scene.obj_bbox(h),
 		}
 	}
 
