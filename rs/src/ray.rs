@@ -1,6 +1,7 @@
+use std::cmp::Ordering;
 use std::{ffi::OsStr, fs::File, io::Write, path::PathBuf};
 
-use crate::math::{deg_to_rad, rand32};
+use crate::math::{deg_to_rad, rand32, rand_int};
 use crate::vec::*;
 
 #[derive(Debug)]
@@ -32,7 +33,7 @@ pub struct Args {
 struct ThreadArgs<'a> {
 	buf: &'a mut [u8],
 	cam: &'a Camera,
-	scene: &'a Scene,
+	scene: &'a BvhTree<'a>,
 	x0: u32,
 	x1: u32,
 	y0: u32,
@@ -107,7 +108,7 @@ pub fn raytrace(args: &Args) -> Image {
 		panic!("number of samples/threads/depth must be positive");
 	}
 	let cam = &args.cam;
-	let scene = &args.scene;
+	let bvh_tree = BvhTree::new(&args.scene);
 
 	let mut buf = vec![0; (3 * nx * ny) as usize];
 	std::thread::scope(|s| {
@@ -119,7 +120,7 @@ pub fn raytrace(args: &Args) -> Image {
 			let render_args = ThreadArgs {
 				buf: buf_alias,
 				cam,
-				scene,
+				scene: &bvh_tree,
 				x0: 0,
 				x1: cam.image_width,
 				y0: ypos,
@@ -260,7 +261,7 @@ impl Sphere {
 	}
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SceneHandle(u32);
 
 #[derive(Debug, Clone)]
@@ -272,32 +273,23 @@ impl Scene {
 	pub fn new(spheres: Vec<Sphere>) -> Scene {
 		Scene { spheres }
 	}
-}
 
-fn ray_color(scene: &Scene, max_depth: u32, r0: &Ray) -> Vec3 {
-	let mut rec: HitRecord = HitRecord::default();
-	let mut r = *r0;
-	let mut color = ONES;
-	for _ in 0..max_depth {
-		if !scene.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
-			let t = 0.5 * (r.dir.normalize().y + 1.);
-			color = color * lerp(t, ONES, vec(0.75, 0.95, 1.0));
-			break;
+	pub fn comparator_axis<'a>(
+		&'a self,
+		axis: i32,
+	) -> impl FnMut(&SceneHandle, &SceneHandle) -> Ordering + 'a {
+		move |h0, h1| {
+			let a = self.obj_bbox(*h0);
+			let b = self.obj_bbox(*h1);
+			bbox_compare(a, b, axis)
 		}
-		let (attenuation, scattered) = scatter(&r, &rec);
-		r = scattered;
-		color = color * attenuation;
 	}
-	color
-}
 
-impl Scene {
-	fn hit(
-		&self,
-		mut interval: Interval,
-		r: &mut Ray,
-		rec: &mut HitRecord,
-	) -> bool {
+	pub fn obj_bbox(&self, h: SceneHandle) -> Aabb {
+		self[h].bounding_box()
+	}
+
+	fn hit(&self, mut interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
 		let mut hit: Option<(f32, SceneHandle)> = None;
 		for h in self.handles() {
 			if let Some(t) = self.hit_obj(h, interval, r) {
@@ -309,7 +301,7 @@ impl Scene {
 			let sphere = &self[h];
 			let center = sphere.center.eval(r.time);
 			rec.t = t;
-			rec.p = r.eval(rec.t);
+			rec.p = r.eval(t);
 			let outward_normal = (rec.p - center) / sphere.radius;
 			rec.set_face_normal(r, outward_normal);
 			rec.mat = sphere.mat;
@@ -321,6 +313,28 @@ impl Scene {
 
 	fn handles(&self) -> impl Iterator<Item = SceneHandle> {
 		(0..self.spheres.len()).map(|i| SceneHandle(i as u32))
+	}
+
+	fn hit_obj_write_rec(
+		&self,
+		h: SceneHandle,
+		interval: Interval,
+		r: &Ray,
+		rec: &mut HitRecord,
+	) -> bool {
+		match self.hit_obj(h, interval, r) {
+			Some(t) => {
+				let sphere = &self[h];
+				let center = sphere.center.eval(r.time);
+				rec.t = t;
+				rec.p = r.eval(t);
+				let outward_normal = (rec.p - center) / sphere.radius;
+				rec.set_face_normal(r, outward_normal);
+				rec.mat = sphere.mat;
+				true
+			}
+			None => false,
+		}
 	}
 
 	#[allow(non_snake_case)]
@@ -351,6 +365,34 @@ impl Scene {
 		}
 		None
 	}
+}
+
+pub fn bbox_compare(a: Aabb, b: Aabb, axis: i32) -> Ordering {
+	let ia = a.axis(axis);
+	let ib = b.axis(axis);
+	if ia.min < ib.min {
+		Ordering::Less
+	} else if ia.min > ib.min {
+		Ordering::Greater
+	} else {
+		Ordering::Equal
+	}
+}
+
+fn ray_color(scene: &BvhTree, max_depth: u32, mut r: Ray) -> Vec3 {
+	let mut rec: HitRecord = HitRecord::default();
+	let mut color = ONES;
+	for _ in 0..max_depth {
+		if !scene.hit(Interval::new(0.001, f32::MAX), &r, &mut rec) {
+			let t = 0.5 * (r.dir.normalize().y + 1.);
+			color = color * lerp(t, ONES, vec(0.75, 0.95, 1.0));
+			break;
+		}
+		let (attenuation, scattered) = scatter(&r, &rec);
+		r = scattered;
+		color = color * attenuation;
+	}
+	color
 }
 
 impl std::ops::Index<SceneHandle> for Scene {
@@ -453,11 +495,11 @@ impl Camera {
 	}
 }
 
-fn ray_color_at_ij(cam: &Camera, scene: &Scene, i: u32, j: u32) -> Vec3 {
+fn ray_color_at_ij(cam: &Camera, scene: &BvhTree, i: u32, j: u32) -> Vec3 {
 	let mut color = Vec3::default();
 	for _ in 0..cam.samples_per_pixel {
 		let ray = cam.sample_ray_around_ij(i, j);
-		color = color + ray_color(scene, cam.max_depth, &ray);
+		color = color + ray_color(scene, cam.max_depth, ray);
 	}
 	color = color / (cam.samples_per_pixel as f32);
 	color
@@ -618,32 +660,174 @@ impl Aabb {
 		}
 	}
 
-	pub fn axis_interval(&self, axis: i32) -> Interval {
-		match axis {
+	pub fn axis(&self, index: i32) -> Interval {
+		match index {
 			0 => self.x,
 			1 => self.y,
 			2 => self.z,
 			_ => unreachable!("don't do this"),
 		}
 	}
+
+	pub fn hit(&self, mut ray_t: Interval, ray: &Ray) -> bool {
+		for axis in 0..3 {
+			let ax = self.axis(axis);
+			let adinv = 1. / ray.dir.axis(axis);
+
+			let v = ray.origin.axis(axis);
+			let t0 = (ax.min - v) * adinv;
+			let t1 = (ax.max - v) * adinv;
+
+			let (t0, t1) = (t0.min(t1), t0.max(t1));
+			ray_t.min = ray_t.min.max(t0);
+			ray_t.max = ray_t.max.min(t1);
+
+			if ray_t.max <= ray_t.min {
+				return false;
+			}
+		}
+		true
+	}
+}
+
+impl std::ops::Index<i32> for Aabb {
+	type Output = Interval;
+
+	fn index(&self, index: i32) -> &Self::Output {
+		match index {
+			0 => &self.x,
+			1 => &self.y,
+			2 => &self.z,
+			_ => unreachable!("don't do this"),
+		}
+	}
 }
 
 #[derive(Debug)]
-pub struct BvhTree {
-	pub scene: Scene,
+pub struct BvhTree<'a> {
+	scene: &'a Scene,
+	nodes: Vec<BvhNode>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Handle {
+	BvhHandle(u32),
+	SceneHandle(SceneHandle),
+}
+
+impl Default for Handle {
+	fn default() -> Self {
+		Self::BvhHandle(0)
+	}
 }
 
 #[derive(Default, Debug, Copy, Clone)]
-pub struct Handle(u32);
-
-#[derive(Debug, Copy, Clone)]
-struct Node {
+struct BvhNode {
+	// TODO: option and one element on top?
 	left: Handle,
 	right: Handle,
+	bbox: Aabb,
 }
 
-impl BvhTree {
-	fn new(scene: Scene) -> Self {
-		BvhTree { scene }
+impl<'a> BvhTree<'a> {
+	fn new(scene: &'a Scene) -> BvhTree<'a> {
+		let handles: Vec<SceneHandle> = scene.handles().collect();
+
+		let mut nodes = Vec::new();
+		Self::add_node(&scene, &mut nodes, &handles);
+		Self { scene, nodes }
+	}
+
+	fn add_node(
+		scene: &Scene,
+		nodes: &mut Vec<BvhNode>,
+		handles: &[SceneHandle],
+	) -> Handle {
+		if handles.len() == 1 {
+			let sh = handles[0];
+			let h = Handle::SceneHandle(sh);
+			let bbox = scene.obj_bbox(sh);
+			nodes.push(BvhNode {
+				left: h,
+				right: h,
+				bbox,
+			});
+			h
+		} else if handles.len() == 2 {
+			let left_sh = handles[0];
+			let right_sh = handles[1];
+			let left = Handle::SceneHandle(left_sh);
+			let right = Handle::SceneHandle(right_sh);
+			let bbox =
+				Aabb::new_from_bbox(scene.obj_bbox(left_sh), scene.obj_bbox(right_sh));
+			Self::push_node(nodes, BvhNode { left, right, bbox })
+		} else {
+			// TODO: move this
+			let axis = rand_int(2);
+			let comparator = scene.comparator_axis(axis);
+
+			let mut handles: Vec<SceneHandle> = handles.to_owned();
+			handles.sort_by(comparator);
+			let mid = handles.len() / 2;
+			let self_id = Self::push_node(nodes, BvhNode::default());
+			let left = Self::add_node(scene, nodes, &handles[..mid]);
+			let right = Self::add_node(scene, nodes, &handles[mid..]);
+			let aabb = Aabb::new_from_bbox(
+				Self::bbox(scene, nodes, left),
+				Self::bbox(scene, nodes, right),
+			);
+			if let Handle::BvhHandle(h) = self_id {
+				nodes[h as usize].left = left;
+				nodes[h as usize].right = right;
+				nodes[h as usize].bbox = aabb;
+			}
+			self_id
+		}
+	}
+
+	fn bbox(scene: &Scene, nodes: &[BvhNode], h: Handle) -> Aabb {
+		match h {
+			Handle::BvhHandle(h) => nodes[h as usize].bbox,
+			Handle::SceneHandle(h) => scene.obj_bbox(h),
+		}
+	}
+
+	fn push_node(nodes: &mut Vec<BvhNode>, node: BvhNode) -> Handle {
+		nodes.push(node);
+		Handle::BvhHandle(nodes.len() as u32 - 1)
+	}
+
+	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
+		self.hit_rec(Handle::BvhHandle(0), interval, r, rec)
+	}
+
+	fn hit_rec(
+		&self,
+		h: Handle,
+		mut interval: Interval,
+		r: &Ray,
+		rec: &mut HitRecord,
+	) -> bool {
+		match h {
+			Handle::BvhHandle(h) => {
+				let node = self.nodes[h as usize];
+				if node.left == node.right {
+					// We have a scene handle
+					self.hit_rec(node.left, interval, r, rec)
+				} else if node.bbox.hit(interval, r) {
+					let hit_left = self.hit_rec(node.left, interval, r, rec);
+					if hit_left {
+						interval.max = rec.t;
+					}
+					let hit_right = self.hit_rec(node.right, interval, r, rec);
+					hit_left || hit_right
+				} else {
+					false
+				}
+			}
+			Handle::SceneHandle(h) => {
+				self.scene.hit_obj_write_rec(h, interval, r, rec)
+			}
+		}
 	}
 }

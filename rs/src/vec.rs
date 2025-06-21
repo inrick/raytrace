@@ -14,8 +14,14 @@ pub static ONES: Vec3 = Vec3 {
 	z: 1.,
 };
 
+static ONES_XY: Vec3 = Vec3 {
+	x: 1.,
+	y: 1.,
+	z: 0.,
+};
+
 pub fn vec(x: f32, y: f32, z: f32) -> Vec3 {
-	Vec3 { x, y, z }
+	Vec3::new(x, y, z)
 }
 
 impl Add for Vec3 {
@@ -68,6 +74,10 @@ impl Neg for Vec3 {
 }
 
 impl Vec3 {
+	pub fn new(x: f32, y: f32, z: f32) -> Self {
+		Self { x, y, z }
+	}
+
 	pub fn sqrt(self) -> Vec3 {
 		vec(self.x.sqrt(), self.y.sqrt(), self.z.sqrt())
 	}
@@ -96,6 +106,15 @@ impl Vec3 {
 		self.x.abs() <= f32::EPSILON
 			&& self.y.abs() <= f32::EPSILON
 			&& self.z.abs() <= f32::EPSILON
+	}
+
+	pub fn axis(&self, index: i32) -> f32 {
+		match index {
+			0 => self.x,
+			1 => self.y,
+			2 => self.z,
+			_ => unreachable!("don't do this"),
+		}
 	}
 }
 
@@ -134,9 +153,8 @@ pub fn random_in_unit_ball() -> Vec3 {
 }
 
 pub fn random_in_unit_disk() -> Vec3 {
-	let ones_xy = vec(1., 1., 0.);
 	loop {
-		let u = vec(rand32(), rand32(), 0.) * 2. - ones_xy;
+		let u = vec(rand32(), rand32(), 0.) * 2. - ONES_XY;
 		if u.norm() < 1. {
 			return u;
 		}
