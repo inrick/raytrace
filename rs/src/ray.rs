@@ -34,8 +34,6 @@ struct ThreadArgs<'a> {
 	buf: &'a mut [u8],
 	cam: &'a Camera,
 	scene: &'a BvhTree<'a>,
-	x0: u32,
-	x1: u32,
 	y0: u32,
 	y1: u32,
 }
@@ -110,19 +108,19 @@ pub fn raytrace(args: &Args) -> Image {
 	let cam = &args.cam;
 	let bvh_tree = BvhTree::new(&args.scene);
 
-	let mut buf = vec![0; (3 * nx * ny) as usize];
+	let mut buf: Vec<u8> = vec![0; (3 * nx * ny) as usize];
 	std::thread::scope(|s| {
 		let mut ypos = 0u32;
+		let mut buf = buf.as_mut_slice();
 		for i in 0..threads {
 			let chunk = (cam.image_height - ypos) / (threads - i);
-			let buf_alias =
-				unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
+			let chunk_size = (3 * cam.image_width * chunk) as usize;
+			let (buf_thread, buf_next) = buf.split_at_mut(chunk_size);
+			buf = buf_next;
 			let render_args = ThreadArgs {
-				buf: buf_alias,
+				buf: buf_thread,
 				cam,
 				scene: &bvh_tree,
-				x0: 0,
-				x1: cam.image_width,
 				y0: ypos,
 				y1: ypos + chunk,
 			};
@@ -150,19 +148,17 @@ fn render(args: ThreadArgs) {
 		buf,
 		cam,
 		scene,
-		x0,
-		x1,
 		y0,
 		y1,
 	} = args;
-	let stride = cam.image_width;
+	let mut pos = 0;
 	for j in y0..y1 {
-		for i in x0..x1 {
+		for i in 0..cam.image_width {
 			let color = ray_color_at_ij(cam, scene, i, j);
-			let pos = 3 * (j * stride + i) as usize;
 			buf[pos + 0] = (255. * linear_to_gamma(color.x)) as u8;
 			buf[pos + 1] = (255. * linear_to_gamma(color.y)) as u8;
 			buf[pos + 2] = (255. * linear_to_gamma(color.z)) as u8;
+			pos += 3;
 		}
 	}
 }
