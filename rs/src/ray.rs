@@ -274,11 +274,11 @@ impl Scene {
 	}
 }
 
-fn ray_color(scene: &Scene, depth: u32, r0: &Ray) -> Vec3 {
+fn ray_color(scene: &Scene, max_depth: u32, r0: &Ray) -> Vec3 {
 	let mut rec: HitRecord = HitRecord::default();
 	let mut r = *r0;
 	let mut color = ONES;
-	for _ in 0..depth {
+	for _ in 0..max_depth {
 		if !scene.hit(Interval::new(0.001, f32::MAX), &mut r, &mut rec) {
 			let t = 0.5 * (r.dir.normalize().y + 1.);
 			color = color * lerp(t, ONES, vec(0.75, 0.95, 1.0));
@@ -298,14 +298,25 @@ impl Scene {
 		r: &mut Ray,
 		rec: &mut HitRecord,
 	) -> bool {
-		let mut hit = false;
+		let mut hit: Option<(f32, SceneHandle)> = None;
 		for h in self.handles() {
-			if self.hit_obj(h, interval, r, rec) {
-				hit = true;
-				interval.max = rec.t;
+			if let Some(t) = self.hit_obj(h, interval, r) {
+				hit = Some((t, h));
+				interval.max = t;
 			}
 		}
-		hit
+		if let Some((t, h)) = hit {
+			let sphere = &self[h];
+			let center = sphere.center.eval(r.time);
+			rec.t = t;
+			rec.p = r.eval(rec.t);
+			let outward_normal = (rec.p - center) / sphere.radius;
+			rec.set_face_normal(r, outward_normal);
+			rec.mat = sphere.mat;
+			true
+		} else {
+			false
+		}
 	}
 
 	fn handles(&self) -> impl Iterator<Item = SceneHandle> {
@@ -318,9 +329,8 @@ impl Scene {
 		h: SceneHandle,
 		interval: Interval,
 		r: &Ray,
-		rec: &mut HitRecord,
-	) -> bool {
-		let sphere = &self.spheres[h.0 as usize];
+	) -> Option<f32> {
+		let sphere = &self[h];
 		let center = sphere.center.eval(r.time);
 		let oc = center - r.origin;
 		// Note:
@@ -335,16 +345,19 @@ impl Scene {
 		if D > 0. {
 			for t in [(h - D.sqrt()) / a, (h + D.sqrt()) / a] {
 				if interval.surrounds(t) {
-					rec.t = t;
-					rec.p = r.eval(t);
-					let outward_normal = (rec.p - center) / sphere.radius;
-					rec.set_face_normal(r, outward_normal);
-					rec.mat = sphere.mat; // TODO: save a handle instead?
-					return true;
+					return Some(t);
 				}
 			}
 		}
-		false
+		None
+	}
+}
+
+impl std::ops::Index<SceneHandle> for Scene {
+	type Output = Sphere;
+
+	fn index(&self, index: SceneHandle) -> &Self::Output {
+		&self.spheres[index.0 as usize]
 	}
 }
 
