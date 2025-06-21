@@ -733,21 +733,20 @@ impl<'a> BvhTree<'a> {
 	fn new(scene: &'a Scene) -> BvhTree<'a> {
 		let handles: Vec<SceneHandle> = scene.handles().collect();
 
-		let mut nodes = Vec::new();
-		Self::add_node(&scene, &mut nodes, &handles);
-		Self { scene, nodes }
+		let mut bvh = Self {
+			scene,
+			nodes: Vec::new(),
+		};
+		bvh.add_node(&handles);
+		bvh
 	}
 
-	fn add_node(
-		scene: &Scene,
-		nodes: &mut Vec<BvhNode>,
-		handles: &[SceneHandle],
-	) -> Handle {
+	fn add_node(&mut self, handles: &[SceneHandle]) -> Handle {
 		if handles.len() == 1 {
 			let sh = handles[0];
 			let h = Handle::SceneHandle(sh);
-			let bbox = scene.obj_bbox(sh);
-			nodes.push(BvhNode {
+			let bbox = self.scene.obj_bbox(sh);
+			self.nodes.push(BvhNode {
 				left: h,
 				right: h,
 				bbox,
@@ -758,43 +757,43 @@ impl<'a> BvhTree<'a> {
 			let right_sh = handles[1];
 			let left = Handle::SceneHandle(left_sh);
 			let right = Handle::SceneHandle(right_sh);
-			let bbox =
-				Aabb::new_from_bbox(scene.obj_bbox(left_sh), scene.obj_bbox(right_sh));
-			Self::push_node(nodes, BvhNode { left, right, bbox })
+			let bbox = Aabb::new_from_bbox(
+				self.scene.obj_bbox(left_sh),
+				self.scene.obj_bbox(right_sh),
+			);
+			self.push_node(BvhNode { left, right, bbox })
 		} else {
 			// TODO: move this
 			let axis = rand_int(2);
-			let comparator = scene.comparator_axis(axis);
+			let comparator = self.scene.comparator_axis(axis);
 
 			let mut handles: Vec<SceneHandle> = handles.to_owned();
 			handles.sort_by(comparator);
 			let mid = handles.len() / 2;
-			let self_id = Self::push_node(nodes, BvhNode::default());
-			let left = Self::add_node(scene, nodes, &handles[..mid]);
-			let right = Self::add_node(scene, nodes, &handles[mid..]);
-			let aabb = Aabb::new_from_bbox(
-				Self::bbox(scene, nodes, left),
-				Self::bbox(scene, nodes, right),
-			);
+			let self_id = self.push_node(BvhNode::default());
+			let left = self.add_node(&handles[..mid]);
+			let right = self.add_node(&handles[mid..]);
+			let aabb = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
 			if let Handle::BvhHandle(h) = self_id {
-				nodes[h as usize].left = left;
-				nodes[h as usize].right = right;
-				nodes[h as usize].bbox = aabb;
+				let n = &mut self.nodes[h as usize];
+				n.left = left;
+				n.right = right;
+				n.bbox = aabb;
 			}
 			self_id
 		}
 	}
 
-	fn bbox(scene: &Scene, nodes: &[BvhNode], h: Handle) -> Aabb {
+	fn bbox(&self, h: Handle) -> Aabb {
 		match h {
-			Handle::BvhHandle(h) => nodes[h as usize].bbox,
-			Handle::SceneHandle(h) => scene.obj_bbox(h),
+			Handle::BvhHandle(h) => self.nodes[h as usize].bbox,
+			Handle::SceneHandle(h) => self.scene.obj_bbox(h),
 		}
 	}
 
-	fn push_node(nodes: &mut Vec<BvhNode>, node: BvhNode) -> Handle {
-		nodes.push(node);
-		Handle::BvhHandle(nodes.len() as u32 - 1)
+	fn push_node(&mut self, node: BvhNode) -> Handle {
+		self.nodes.push(node);
+		Handle::BvhHandle(self.nodes.len() as u32 - 1)
 	}
 
 	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
