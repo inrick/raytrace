@@ -742,45 +742,34 @@ impl<'a> BvhTree<'a> {
 	}
 
 	fn add_node(&mut self, handles: &[SceneHandle]) -> Handle {
-		if handles.len() == 1 {
-			let sh = handles[0];
-			let h = Handle::SceneHandle(sh);
-			let bbox = self.scene.obj_bbox(sh);
-			self.nodes.push(BvhNode {
-				left: h,
-				right: h,
-				bbox,
-			});
-			h
-		} else if handles.len() == 2 {
-			let left_sh = handles[0];
-			let right_sh = handles[1];
-			let left = Handle::SceneHandle(left_sh);
-			let right = Handle::SceneHandle(right_sh);
-			let bbox = Aabb::new_from_bbox(
-				self.scene.obj_bbox(left_sh),
-				self.scene.obj_bbox(right_sh),
-			);
-			self.push_node(BvhNode { left, right, bbox })
-		} else {
-			// TODO: move this
-			let axis = rand_int(2);
-			let comparator = self.scene.comparator_axis(axis);
-
-			let mut handles: Vec<SceneHandle> = handles.to_owned();
-			handles.sort_by(comparator);
-			let mid = handles.len() / 2;
-			let self_id = self.push_node(BvhNode::default());
-			let left = self.add_node(&handles[..mid]);
-			let right = self.add_node(&handles[mid..]);
-			let aabb = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
-			if let Handle::BvhHandle(h) = self_id {
-				let n = &mut self.nodes[h as usize];
-				n.left = left;
-				n.right = right;
-				n.bbox = aabb;
+		match handles {
+			&[h] => Handle::SceneHandle(h),
+			&[l, r] => {
+				let left = Handle::SceneHandle(l);
+				let right = Handle::SceneHandle(r);
+				let bbox = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
+				self.push_node(BvhNode { left, right, bbox })
 			}
-			self_id
+			_ => {
+				// TODO: move this
+				let axis = rand_int(2);
+				let comparator = self.scene.comparator_axis(axis);
+
+				let mut handles: Vec<SceneHandle> = handles.to_owned();
+				handles.sort_by(comparator);
+				let mid = handles.len() / 2;
+				let self_id = self.push_node(BvhNode::default());
+				let left = self.add_node(&handles[..mid]);
+				let right = self.add_node(&handles[mid..]);
+				let aabb = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
+				if let Handle::BvhHandle(h) = self_id {
+					let n = &mut self.nodes[h as usize];
+					n.left = left;
+					n.right = right;
+					n.bbox = aabb;
+				}
+				self_id
+			}
 		}
 	}
 
@@ -810,18 +799,15 @@ impl<'a> BvhTree<'a> {
 		match h {
 			Handle::BvhHandle(h) => {
 				let node = self.nodes[h as usize];
-				if node.left == node.right {
-					// We have a scene handle
-					self.hit_rec(node.left, interval, r, rec)
-				} else if node.bbox.hit(interval, r) {
+				node.bbox.hit(interval, r) && {
 					let hit_left = self.hit_rec(node.left, interval, r, rec);
 					if hit_left {
 						interval.max = rec.t;
 					}
-					let hit_right = self.hit_rec(node.right, interval, r, rec);
+					let right_is_different = node.left != node.right;
+					let hit_right =
+						right_is_different && self.hit_rec(node.right, interval, r, rec);
 					hit_left || hit_right
-				} else {
-					false
 				}
 			}
 			Handle::SceneHandle(h) => {
