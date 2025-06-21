@@ -473,7 +473,7 @@ impl Camera {
 		}
 	}
 
-	fn sample_ray_around_ij(&self, i: u32, j: u32) -> Ray {
+	fn sample_ray_around_ij(&self, time: f32, i: u32, j: u32) -> Ray {
 		let offset = sample_square();
 		let pixel_sample = self.pixel_00_loc
 			+ self.pixel_delta_u * (i as f32 + offset.x)
@@ -483,11 +483,8 @@ impl Camera {
 		} else {
 			self.center
 		};
-		Ray {
-			origin,
-			dir: pixel_sample - self.center,
-			time: rand32(),
-		}
+		let dir = pixel_sample - self.center;
+		Ray { origin, dir, time }
 	}
 
 	fn defocus_disk_sample(&self) -> Vec3 {
@@ -499,7 +496,8 @@ impl Camera {
 fn ray_color_at_ij(cam: &Camera, scene: &BvhTree, i: u32, j: u32) -> Vec3 {
 	let mut color = Vec3::default();
 	for _ in 0..cam.samples_per_pixel {
-		let ray = cam.sample_ray_around_ij(i, j);
+		let time = rand32();
+		let ray = cam.sample_ray_around_ij(time, i, j);
 		color = color + ray_color(scene, cam.max_depth, ray);
 	}
 	color = color / (cam.samples_per_pixel as f32);
@@ -689,6 +687,22 @@ impl Aabb {
 		}
 		true
 	}
+
+	pub fn longest_axis(&self) -> i32 {
+		if self.x.size() > self.y.size() {
+			if self.x.size() > self.z.size() {
+				0
+			} else {
+				2
+			}
+		} else {
+			if self.y.size() > self.z.size() {
+				1
+			} else {
+				2
+			}
+		}
+	}
 }
 
 impl std::ops::Index<i32> for Aabb {
@@ -706,20 +720,17 @@ impl std::ops::Index<i32> for Aabb {
 
 #[derive(Debug)]
 pub struct BvhTree<'a> {
+	start: Handle,
 	scene: &'a Scene,
 	nodes: Vec<BvhNode>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Handle {
+	#[default]
+	Empty,
 	BvhHandle(u32),
 	SceneHandle(SceneHandle),
-}
-
-impl Default for Handle {
-	fn default() -> Self {
-		Self::BvhHandle(0)
-	}
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -735,15 +746,17 @@ impl<'a> BvhTree<'a> {
 		let handles: Vec<SceneHandle> = scene.handles().collect();
 
 		let mut bvh = Self {
+			start: Handle::Empty,
 			scene,
 			nodes: Vec::new(),
 		};
-		bvh.add_node(&handles);
+		bvh.start = bvh.add_node(&handles);
 		bvh
 	}
 
 	fn add_node(&mut self, handles: &[SceneHandle]) -> Handle {
 		match handles {
+			&[] => Handle::Empty,
 			&[h] => Handle::SceneHandle(h),
 			&[l, r] => {
 				let left = Handle::SceneHandle(l);
@@ -752,30 +765,26 @@ impl<'a> BvhTree<'a> {
 				self.push_node(BvhNode { left, right, bbox })
 			}
 			_ => {
-				// TODO: move this
-				let axis = rand_int(2);
-				let comparator = self.scene.comparator_axis(axis);
-
 				let mut handles: Vec<SceneHandle> = handles.to_owned();
+				let mut bbox = Aabb::default();
+				for &h in &handles {
+					bbox = Aabb::new_from_bbox(bbox, self.scene.obj_bbox(h));
+				}
+				let axis = bbox.longest_axis();
+				let comparator = self.scene.comparator_axis(axis);
 				handles.sort_by(comparator);
+
 				let mid = handles.len() / 2;
-				let self_id = self.push_node(BvhNode::default());
 				let left = self.add_node(&handles[..mid]);
 				let right = self.add_node(&handles[mid..]);
-				let aabb = Aabb::new_from_bbox(self.bbox(left), self.bbox(right));
-				if let Handle::BvhHandle(h) = self_id {
-					let n = &mut self.nodes[h as usize];
-					n.left = left;
-					n.right = right;
-					n.bbox = aabb;
-				}
-				self_id
+				self.push_node(BvhNode { left, right, bbox })
 			}
 		}
 	}
 
 	fn bbox(&self, h: Handle) -> Aabb {
 		match h {
+			Handle::Empty => Aabb::default(),
 			Handle::BvhHandle(h) => self.nodes[h as usize].bbox,
 			Handle::SceneHandle(h) => self.scene.obj_bbox(h),
 		}
@@ -787,7 +796,7 @@ impl<'a> BvhTree<'a> {
 	}
 
 	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
-		self.hit_rec(Handle::BvhHandle(0), interval, r, rec)
+		self.hit_rec(self.start, interval, r, rec)
 	}
 
 	fn hit_rec(
@@ -798,6 +807,7 @@ impl<'a> BvhTree<'a> {
 		rec: &mut HitRecord,
 	) -> bool {
 		match h {
+			Handle::Empty => false,
 			Handle::BvhHandle(h) => {
 				let node = self.nodes[h as usize];
 				node.bbox.hit(interval, r) && {
