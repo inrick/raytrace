@@ -31,10 +31,10 @@ pub struct Args {
 	pub scene: Scene,
 }
 
-struct ThreadArgs<'a> {
+struct ThreadArgs<'a, T: Hittable> {
 	buf: &'a mut [u8],
 	cam: &'a Camera,
-	scene: &'a BvhTree<'a>,
+	scene: &'a T,
 	y0: u32,
 	y1: u32,
 }
@@ -110,7 +110,9 @@ pub fn raytrace(args: &Args) -> Image {
 		};
 	};
 	let cam = &args.cam;
-	let bvh_tree = BvhTree::new(&args.scene);
+	//let scene = &args.scene;
+	let bvh = BvhTree::new(&args.scene);
+	let scene = &bvh;
 
 	let mut buf: Vec<u8> =
 		vec![0; (3 * cam.image_width * cam.image_height) as usize];
@@ -125,7 +127,7 @@ pub fn raytrace(args: &Args) -> Image {
 			let render_args = ThreadArgs {
 				buf: buf_thread,
 				cam,
-				scene: &bvh_tree,
+				scene,
 				y0: ypos,
 				y1: ypos + chunk_rows,
 			};
@@ -148,7 +150,7 @@ fn linear_to_gamma(lin: f32) -> f32 {
 }
 
 #[allow(clippy::identity_op)]
-fn render(args: ThreadArgs) {
+fn render<T: Hittable>(args: ThreadArgs<T>) {
 	let ThreadArgs {
 		buf,
 		cam,
@@ -262,6 +264,10 @@ impl Sphere {
 	}
 }
 
+trait Hittable {
+	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool;
+}
+
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SceneHandle(u32);
 
@@ -288,28 +294,6 @@ impl Scene {
 
 	pub fn obj_bbox(&self, h: SceneHandle) -> Aabb {
 		self[h].bounding_box()
-	}
-
-	fn hit(&self, mut interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
-		let mut hit: Option<(f32, SceneHandle)> = None;
-		for h in self.handles() {
-			if let Some(t) = self.hit_obj(h, interval, r) {
-				hit = Some((t, h));
-				interval.max = t;
-			}
-		}
-		if let Some((t, h)) = hit {
-			let sphere = &self[h];
-			let center = sphere.center.eval(r.time);
-			rec.t = t;
-			rec.p = r.eval(t);
-			let outward_normal = (rec.p - center) / sphere.radius;
-			rec.set_face_normal(r, outward_normal);
-			rec.mat = sphere.mat;
-			true
-		} else {
-			false
-		}
 	}
 
 	fn handles(&self) -> impl Iterator<Item = SceneHandle> {
@@ -368,6 +352,30 @@ impl Scene {
 	}
 }
 
+impl Hittable for Scene {
+	fn hit(&self, mut interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
+		let mut hit: Option<(f32, SceneHandle)> = None;
+		for h in self.handles() {
+			if let Some(t) = self.hit_obj(h, interval, r) {
+				hit = Some((t, h));
+				interval.max = t;
+			}
+		}
+		if let Some((t, h)) = hit {
+			let sphere = &self[h];
+			let center = sphere.center.eval(r.time);
+			rec.t = t;
+			rec.p = r.eval(t);
+			let outward_normal = (rec.p - center) / sphere.radius;
+			rec.set_face_normal(r, outward_normal);
+			rec.mat = sphere.mat;
+			true
+		} else {
+			false
+		}
+	}
+}
+
 pub fn bbox_compare(a: Aabb, b: Aabb, axis: i32) -> Ordering {
 	let ia = a.axis(axis);
 	let ib = b.axis(axis);
@@ -380,7 +388,7 @@ pub fn bbox_compare(a: Aabb, b: Aabb, axis: i32) -> Ordering {
 	}
 }
 
-fn ray_color(scene: &BvhTree, max_depth: u32, mut r: Ray) -> Vec3 {
+fn ray_color<T: Hittable>(scene: &T, max_depth: u32, mut r: Ray) -> Vec3 {
 	let mut rec: HitRecord = HitRecord::default();
 	let mut color = ONES;
 	for _ in 0..max_depth {
@@ -493,7 +501,12 @@ impl Camera {
 	}
 }
 
-fn ray_color_at_ij(cam: &Camera, scene: &BvhTree, i: u32, j: u32) -> Vec3 {
+fn ray_color_at_ij<T: Hittable>(
+	cam: &Camera,
+	scene: &T,
+	i: u32,
+	j: u32,
+) -> Vec3 {
 	let mut color = Vec3::default();
 	for _ in 0..cam.samples_per_pixel {
 		let time = rand32();
@@ -640,7 +653,7 @@ impl Interval {
 	}
 }
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Aabb {
 	pub x: Interval,
 	pub y: Interval,
@@ -736,15 +749,14 @@ pub struct BvhTree<'a> {
 	nodes: Vec<BvhNode>,
 }
 
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Handle {
-	#[default]
 	Empty,
 	BvhHandle(u32),
 	SceneHandle(SceneHandle),
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct BvhNode {
 	left: Handle,
 	right: Handle,
@@ -790,10 +802,6 @@ impl<'a> BvhTree<'a> {
 		Handle::BvhHandle(self.nodes.len() as u32 - 1)
 	}
 
-	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
-		self.hit_rec(self.start, interval, r, rec)
-	}
-
 	fn hit_rec(
 		&self,
 		h: Handle,
@@ -820,5 +828,11 @@ impl<'a> BvhTree<'a> {
 				self.scene.hit_obj_write_rec(h, interval, r, rec)
 			}
 		}
+	}
+}
+
+impl Hittable for BvhTree<'_> {
+	fn hit(&self, interval: Interval, r: &Ray, rec: &mut HitRecord) -> bool {
+		self.hit_rec(self.start, interval, r, rec)
 	}
 }
