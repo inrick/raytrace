@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::math::rand32;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 

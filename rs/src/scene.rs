@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::math::{deg_to_rad, rand32};
 use crate::ray::{Material, Ray, Scene, Sphere};
 use crate::vec::vec;
