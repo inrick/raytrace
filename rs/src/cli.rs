@@ -43,6 +43,7 @@ pub fn run() -> Result<()> {
 	);
 	opts.optopt("x", "width", "width of image [default: 600]", "PIXELS");
 	opts.optopt("y", "height", "height of image [default: 300]", "PIXELS");
+	pprof::register_flag(&mut opts);
 
 	let program_args: Vec<String> = std::env::args().collect();
 	let program = program_args[0].clone();
@@ -78,6 +79,8 @@ pub fn run() -> Result<()> {
 		.parse()
 		.map_err(|_| "image height must be a positive number")?;
 
+	let profiler = pprof::start_cpu_profile(&parsed)?;
+
 	let t0 = Instant::now();
 
 	let cfg = Config {
@@ -100,5 +103,74 @@ pub fn run() -> Result<()> {
 		t1.duration_since(t0).as_secs_f32()
 	);
 
+	pprof::write_cpu_profile(profiler);
+
 	save_file(&img, &output)
+}
+
+#[cfg(feature = "pprof")]
+mod pprof {
+	use super::Result;
+
+	use pprof::protos::Message;
+	use pprof::ProfilerGuard;
+	use std::fs::File;
+
+	pub struct ProfileOptions<'a> {
+		filename: String,
+		guard: ProfilerGuard<'a>,
+	}
+
+	pub fn register_flag(opts: &mut getopts::Options) {
+		opts.optopt("", "cpuprof", "path where to write cpu profile", "");
+	}
+
+	pub fn start_cpu_profile(
+		parsed: &getopts::Matches,
+	) -> Result<Option<ProfileOptions>> {
+		let filename: String = parsed
+			.opt_str("cpuprof")
+			.unwrap_or_else(|| "".to_owned())
+			.parse()
+			.map_err(|_| "need a valid file name")?;
+		if filename != "" {
+			let guard = pprof::ProfilerGuardBuilder::default()
+				.frequency(1000)
+				.blocklist(&["libc", "libgcc", "pthread", "vdso"])
+				.build()?;
+			Ok(Some(ProfileOptions { filename, guard }))
+		} else {
+			Ok(None)
+		}
+	}
+
+	pub fn write_cpu_profile(opts: Option<ProfileOptions>) {
+		if let Some(opts) = opts {
+			match write_report(&opts.filename, opts.guard) {
+				Ok(_) => println!("cpu profile written to {}", &opts.filename),
+				Err(err) => println!("error writing cpu profile: {}", err),
+			};
+		}
+	}
+
+	fn write_report(filename: &str, guard: ProfilerGuard) -> Result<()> {
+		let report = guard.report().build()?;
+		let mut file = File::create(filename)?;
+		let profile = report.pprof()?;
+		profile.write_to_writer(&mut file)?;
+		Ok(())
+	}
+}
+
+#[cfg(not(feature = "pprof"))]
+mod pprof {
+	use super::Result;
+
+	pub fn register_flag(_: &mut getopts::Options) {}
+
+	pub fn start_cpu_profile(_: &getopts::Matches) -> Result<Option<()>> {
+		Ok(None)
+	}
+
+	pub fn write_cpu_profile(_: Option<()>) {}
 }
