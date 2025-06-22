@@ -701,7 +701,7 @@ impl Aabb {
 			let t0 = (ax.min - v) * adinv;
 			let t1 = (ax.max - v) * adinv;
 
-			let (t0, t1) = (t0.min(t1), t0.max(t1));
+			let (t0, t1) = if t0 < t1 { (t0, t1) } else { (t1, t0) };
 			ray_t.min = ray_t.min.max(t0);
 			ray_t.max = ray_t.max.min(t1);
 
@@ -713,14 +713,15 @@ impl Aabb {
 	}
 
 	pub fn longest_axis(&self) -> i32 {
-		if self.x.size() > self.y.size() {
-			if self.x.size() > self.z.size() {
+		let (x, y, z) = (self.x.size(), self.y.size(), self.z.size());
+		if x > y {
+			if x > z {
 				0
 			} else {
 				2
 			}
 		} else {
-			if self.y.size() > self.z.size() {
+			if y > z {
 				1
 			} else {
 				2
