@@ -115,6 +115,7 @@ mod pprof {
 	use pprof::protos::Message;
 	use pprof::ProfilerGuard;
 	use std::fs::File;
+	use std::io::Write;
 
 	pub struct ProfileOptions<'a> {
 		filename: String,
@@ -157,7 +158,9 @@ mod pprof {
 		let report = guard.report().build()?;
 		let mut file = File::create(filename)?;
 		let profile = report.pprof()?;
-		profile.write_to_writer(&mut file)?;
+		let mut content = Vec::new();
+		profile.encode(&mut content)?;
+		file.write_all(&content)?;
 		Ok(())
 	}
 }
